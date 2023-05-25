@@ -1,0 +1,57 @@
+hydra:
+  run:
+    dir: ${root_dir}/${train.exps_folder}/${train.folder}
+  sweep:
+    dir: ${root_dir}/${train.exps_folder}/
+    subdir: ${train.folder}
+
+root_dir: '.'
+
+deterministic: True
+
+mode: 'train'
+
+wandb:
+  logger:
+    entity: social-signals
+    project: social-signals
+    tags: []
+    offline: False
+    run_name: ${train.run_name}
+  saver:
+    upload: False
+    monitor: 'val/epoch/loss'
+    mode: 'min'
+
+data:
+  data_path: '/home/abrar/vlnce/VLN-CE/finetuning/data'
+
+# these hyperparameters are passed into the model
+model:
+  name: ${train.model_name}
+
+
+optimizer:
+  name: 'AdamW'
+  lr: 1e-4
+
+train:
+  model_name: 'LSTM'
+  exps_folder: 'exps'
+  folder: ${model.name}/${train.run_name}/seed_${train.seed}
+  run_name: ${model.name}
+
+  objectives: ['headpose']
+
+  log: False
+
+  seed: 0
+
+  config_path: "/home/abrar/vlnce/VLN-CE/vlnce_baselines/config/rxr_baselines/rxr_cma_en.yaml"
+
+  ckpt_path: None
+
+  batch_size: 32
+  epochs: 100
+  save_period: 1
+  validate_every_n_epoch: 3
