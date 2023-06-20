@@ -3,14 +3,6 @@ import numpy as np
 import math
 import torch
 
-from utils.visualize_pose import *
-
-path = '/home/tangyimi/social_signal/dining_dataset/full_gazes/01_1.npz'
-
-# Load the data
-data = np.load(path)
-gaze = data['headpose'] # shape (180, 2)
-
 
 def create_image(width, height):
     blank_image = np.zeros((height, width, 3), np.uint8)
@@ -34,6 +26,31 @@ def visualize_headgaze(image, est_gaze,color=(255,0,0)):
     bordered_image = cv2.copyMakeBorder(output_image, top=5, bottom=5, left=5, right=5, 
                                         borderType=cv2.BORDER_CONSTANT, value=[0, 0, 0])
     return bordered_image
+
+
+def get_xy(pose, index):
+    return (int(pose[index*2]), int(pose[index*2+1]))
+
+
+def visualize_pose(image, pose):  
+    thickness = 4 
+
+    cv2.line(image, get_xy(pose, 0), get_xy(pose, 1), (51,0,153), thickness)
+    cv2.line(image, get_xy(pose, 0), get_xy(pose, 9), (102,0,153), thickness)
+    cv2.line(image, get_xy(pose, 0), get_xy(pose, 10), (153,0,102), thickness)
+    cv2.line(image, get_xy(pose, 1), get_xy(pose, 2), (1,51,153), thickness)
+    cv2.line(image, get_xy(pose, 1), get_xy(pose, 5), (0,153,102), thickness)
+    cv2.line(image, get_xy(pose, 1), get_xy(pose, 8), (1,0,153), thickness)
+    cv2.line(image, get_xy(pose, 2), get_xy(pose, 3), (1,102,154), thickness)
+    cv2.line(image, get_xy(pose, 3), get_xy(pose, 4), (0,153,153), thickness)
+    cv2.line(image, get_xy(pose, 5), get_xy(pose, 6), (0,153,51), thickness)
+    cv2.line(image, get_xy(pose, 6), get_xy(pose, 7), (0,153,0), thickness)
+    cv2.line(image, get_xy(pose, 9), get_xy(pose, 11), (153,0,153), thickness)
+    cv2.line(image, get_xy(pose, 10), get_xy(pose, 12), (153,0,51), thickness)
+    bordered_image = cv2.copyMakeBorder(image, top=5, bottom=5, left=5, right=5, 
+                                        borderType=cv2.BORDER_CONSTANT, value=[0, 0, 0])
+    return bordered_image
+
 
 
 def write_video(frames, output_path, fps=30):
@@ -74,41 +91,11 @@ def construct_batch_video(batch, task, color=(255,0,0)):
 
 
 
-def evaluate(model, batch, task):
-    # batch (16,3,1080,26)
-    if task == 'pose':
-        batch = index_pose(batch)
+#if __name__ == '__main__':
+    #frames = []
+    #for est in gaze[:180]:
+    #    blank = create_image(250,250)
+    #    image = visualize_headgaze(blank, est)
+    #    frames.append(image)
+    #write_video(frames, 'test.mp4')
 
-    bz = batch.size(0)
-    batch = batch.reshape(bz, 3, 6, 180, batch.size(-1))
-
-    # do segement
-    x = batch[:, :, :5, :, :]
-    y = batch[:, :, 5, :, :] # shape (bz, 3, 180, 2)
-    
-    # reshape
-    x = x.permute(0, 2, 1, 3, 4).reshape(bz, 5, -1)
-    x_flatten = x.view(x.size(0), -1)
-    
-    model.eval()
-    with torch.no_grad():
-        y_hat = model.forward(x_flatten) # shape (bz, 3*180*feature_dim)
-
-    y_hat = y_hat.reshape(bz, 3, 180, -1)
-
-    videos_prediction = construct_batch_video(y_hat, task=task)
-    videos_inference = construct_batch_video(y, task=task, color=(0,0,255))
-
-    result_videos = np.concatenate([videos_prediction, videos_inference], axis=2) # shape (bz, 180, 520, 780, 3)
-
-    return result_videos
-
-
-
-if __name__ == '__main__':
-    frames = []
-    for est in gaze[:180]:
-        blank = create_image(250,250)
-        image = visualize_headgaze(blank, est)
-        frames.append(image)
-    write_video(frames, 'test.mp4')

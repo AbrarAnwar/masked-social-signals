@@ -7,7 +7,7 @@ from words import seconds_to_frame
 word_dir = 'dining_dataset/words/v1/'
 gaze_dir = 'dining_dataset/full_gazes/'
 status_dir = 'dining_dataset/upsampled-person-speaking/'
-keypoints_dir = 'dining_dataset/full_keypoints/'
+keypoints_dir = 'dining_dataset/clean_keypoints/'
 
 # write to jsonline file 9k lines
 # {id , word, status_speaker, whisper_speaker, gaze:, headpose, body, face}
@@ -72,8 +72,8 @@ def write_to_batch(window_size, stride_size, is_second=True):
     target = Path(target_dir)
     target.mkdir(parents=True, exist_ok=True)
 
-    for (i, words), headpose_gaze, pose in zip(read_word(), read_gazepose(), read_keypoint()):
-        print(i+1)
+    for (idx, words), headpose_gaze, pose in zip(read_word(), read_gazepose(), read_keypoint()):
+        print(idx+1)
 
         assert len(words) == headpose_gaze[0][0].shape[0] == headpose_gaze[1][0].shape[0] == headpose_gaze[2][0].shape[0] == pose[0].shape[0] == pose[1].shape[0] == pose[2].shape[0], \
             'Inconsistent! word_length: {}, headpose_length: {}, pose_length: {}'.format(len(words), headpose_gaze[0][0].shape[0], pose[0].shape[0])

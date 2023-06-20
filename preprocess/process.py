@@ -2,6 +2,7 @@ import json
 import pathlib
 import csv
 import numpy as np
+from scipy.interpolate import interp1d
 
 word_dir = 'dining_dataset/words/v1/'
 gaze_dir = 'dining_dataset/processed_gazes/'
@@ -10,6 +11,7 @@ keypoints_dir = 'vision_openpose_features/'
 
 process_gazepose_dir = 'dining_dataset/full_gazes/'
 process_keypoints_dir = 'dining_dataset/full_keypoints/'
+clean_keypoints_dir = 'dining_dataset/clean_keypoints/'
 
 def calculate_length():
     result = []
@@ -187,9 +189,56 @@ def process_keypoints(length_list):
             
 
 
+def index_pose(array):
+     # 9, 10, 11, 12
+    indices = [0,1,2,3,4,5,6,7,8,15,16,17,18]
+    indices_xy = [j for i in indices for j in (i*3, i*3 + 1)] 
+
+    return array[:, indices_xy]
+
+
+
+def clean_pose():
+    # read npz file
+    for i in range(30):
+        if i+1 == 9:
+            continue
+
+        for person in range(3):
+            file_name = process_keypoints_dir + '{:02d}_{:d}'.format(i+1, person+1) + '.npz'
+            print('Cleaning file: {}'.format(file_name))
+            pose = np.load(file_name)['pose']
+            new_pose = index_pose(pose)
+            
+
+            for column in range(0, new_pose.shape[-1]):
+                valid_entries = np.nonzero(new_pose[:, column])[0]
+                missing_entries = np.where(new_pose[:, column] == 0)[0]
+
+                interp_func = interp1d(valid_entries, new_pose[valid_entries, column], bounds_error=False)
+
+                new_pose[missing_entries, column] = interp_func(missing_entries)
+                
+                first_non_zero = new_pose[valid_entries[0], column]
+                last_non_zero = new_pose[valid_entries[-1], column]
+                new_pose[:valid_entries[0]] = first_non_zero
+                new_pose[valid_entries[-1] + 1:] = last_non_zero
+                
+                assert not any((new_pose[:, column] == 0)), 'File: {} column: {} has 0'.format(file_name, column)
+                
+            # write to jsonline file for each person and each video
+            clean_file = clean_keypoints_dir + '{:02d}_{:d}'.format(i+1, person+1) + '.npz'
+            np.savez(clean_file, pose=new_pose)
+
+            
+
+
 
 if __name__ == '__main__':
-    total_length = calculate_length()
+    #total_length = calculate_length()
     #check_length(total_length, True)
-    process_gazepose(total_length)
-    process_keypoints(total_length)
+    #process_gazepose(total_length)
+    #process_keypoints(total_length)
+    clean_pose()
+    
+
