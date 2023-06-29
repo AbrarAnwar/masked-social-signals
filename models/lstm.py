@@ -1,49 +1,25 @@
 from typing import Any, Optional
 from lightning.pytorch.utilities.types import STEP_OUTPUT
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 
 from lightning import LightningModule
+from lightning.pytorch.strategies import DDPStrategy
 import lightning.pytorch as pl
 
 from utils.dataset import *
 from utils.visualize import *
 from utils.embeddings import *
-
-class Encoder(nn.Module):
-    def __init__(self, feature_dim, segment_length, reduced_dim):
-        super().__init__()
-        self.linear = nn.Sequential(
-                nn.Linear(3*segment_length*feature_dim, 256),
-                nn.ReLU(),
-                nn.Linear(256, reduced_dim)
-            )
-        
-    def forward(self, batch):
-        return self.linear(batch)
-    
-
-class Decoder(nn.Module):
-    def __init__(self, hidden_size, segment_length, feature_dim):
-        super().__init__()
-        self.linear = nn.Sequential(
-                nn.Linear(hidden_size, 256),
-                nn.ReLU(),
-                nn.Linear(256, 3*segment_length*feature_dim)
-            )
-        
-    def forward(self, batch):
-        return self.linear(batch)
+from models.base import Encoder, Decoder
 
 
-
-# TODO: Make LSTM model in here
 class LSTMModel(LightningModule):
     FEATURES = {'word':768, 'headpose':2, 'gaze':2, 'pose':26}
 
-    def __init__(self, reduced_dim, hidden_size, segment, task, multi_task, method):
+    def __init__(self, reduced_dim, hidden_size, segment, task, multi_task, method, lr, weight_decay):
         super().__init__()
         self.task = task
         self.feature_dim = self.FEATURES[task]
@@ -55,7 +31,9 @@ class LSTMModel(LightningModule):
         self.multi_task = multi_task
         self.method = method # 'concat' or 'maxpool'
 
+        # testing
         self.output = 0
+        self.test_losses = []
 
         if not self.multi_task:
             self.encoder = Encoder(self.feature_dim, self.segment_length, self.reduced_dim)
@@ -63,6 +41,7 @@ class LSTMModel(LightningModule):
             self.decoder = Decoder(self.hidden_size*2, self.segment_length, self.feature_dim)
         else:
             self.processor = BERTProcessor()
+            self.task_list = ['headpose', 'gaze', 'pose', 'word']
             self.encoder = nn.ModuleList([Encoder(self.FEATURES['headpose'], self.segment_length, self.reduced_dim),
                                         Encoder(self.FEATURES['gaze'], self.segment_length, self.reduced_dim),
                                         Encoder(self.FEATURES['pose'], self.segment_length, self.reduced_dim),
@@ -74,6 +53,10 @@ class LSTMModel(LightningModule):
             
             self.decoder = Decoder(self.hidden_size*2, self.segment_length, self.feature_dim)
 
+        # optimizer
+        self.lr = lr
+        self.weight_decay = weight_decay
+
     
     def forward_single_task(self, batch):
         batch = batch[self.task]
@@ -82,28 +65,27 @@ class LSTMModel(LightningModule):
         train_segment = self.segment - 1
 
         x = batch[:, :, :train_segment, :, :]
-        y = batch[:, :, -1, :, :].squeeze()
+        y = batch[:, :, -1, :, :].squeeze(2)
 
         x = x.permute(0, 2, 1, 3, 4).reshape(bz*train_segment, -1)
 
         encode = self.encoder(x).view(bz, train_segment, self.reduced_dim)
         lstm_out, _ = self.lstm(encode)
-        lstm_out = lstm_out[:, -1, :] 
+        lstm_out = lstm_out[:, -1, :] # 
         reconstructed = self.decoder(lstm_out).reshape(bz, 3, self.segment_length, -1)
 
         return y, reconstructed
                         
     def forward_multi_task(self, batch):
         batch['word'] = self.processor.get_embeddings(batch['word']) 
-        task_list = ['headpose', 'gaze', 'pose', 'word']
         encode_list = []
         bz = batch['pose'].size(0)
         train_segment = self.segment - 1
 
-        for task_idx, task in enumerate(task_list):
+        for task_idx, task in enumerate(self.task_list):
             current = batch[task]
             current = current.reshape(bz, 3, self.segment, self.segment_length, current.size(-1))
-            x = current[:, :, :train_segment, :, :]
+            x = current[:, :, :train_segment, :, :] # (bz, 3, 5, 180, feature_dim)
             x = x.permute(0, 2, 1, 3, 4).reshape(bz*train_segment, -1)
 
             encode = self.encoder[task_idx](x).view(bz, train_segment, self.reduced_dim)
@@ -111,7 +93,7 @@ class LSTMModel(LightningModule):
             encode_list.append(encode)
 
             if task == self.task:
-                y = current[:, :, -1, :, :].squeeze()
+                y = current[:, :, -1, :, :].squeeze(2) # (bz, 3, 180, feature_dim)
         
         if self.method == 'concat':
             encode = torch.cat(encode_list, dim=2)
@@ -122,7 +104,7 @@ class LSTMModel(LightningModule):
 
         lstm_out, _ = self.lstm(encode)
         lstm_out = lstm_out[:, -1, :]
-        reconstructed = self.decoder(lstm_out).reshape(bz, 3, self.segment_length, -1)
+        reconstructed = self.decoder(lstm_out).reshape(bz, 3, self.segment_length, -1) # (bz, 3, 180, feature_dim)
 
         return y, reconstructed
 
@@ -134,7 +116,7 @@ class LSTMModel(LightningModule):
         
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=3e-5)
+        return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
     def training_step(self, batch, batch_idx):
         y, y_hat = self.forward(batch)
@@ -143,6 +125,14 @@ class LSTMModel(LightningModule):
         return loss
     
     def test_step(self, batch, batch_idx):
+        if self.multi_task:
+            result_dir = f'./lstm_result/{self.method}/{self.task}'
+        else:
+            result_dir = f'./lstm_result/single/{self.task}'
+
+        if not os.path.exists(result_dir):
+            os.makedirs(result_dir)
+
         y, y_hat = self.forward(batch)
         videos_prediction = construct_batch_video(y_hat, task=self.task)
         videos_inference = construct_batch_video(y, task=self.task, color=(0,0,255))
@@ -150,29 +140,22 @@ class LSTMModel(LightningModule):
         result_videos = np.concatenate([videos_prediction, videos_inference], axis=2)
 
         for i in range(batch[self.task].shape[0]):
-            write_video(result_videos[i], f'./result_/{self.task}/{self.output}.mp4')
+            write_video(result_videos[i], f'{result_dir}/{self.output}.mp4')
             self.output += 1
 
-
-def main(epoch, reduced_dim, hidden_size, segment, task, multi_task, method):
-    # load data
-    single_task = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18') 
+        loss = F.mse_loss(y_hat, y, reduction='mean')
+        self.test_losses.append(loss)
+        return loss
     
-    train_size = int(0.8 * len(single_task))
-    train_dataset = Subset(single_task, range(0, train_size))
-    val_dataset = Subset(single_task, range(train_size, len(single_task)))
-
-    train_dataloader = DataLoader(train_dataset, batch_size=16, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
-    val_dataloader = DataLoader(val_dataset, batch_size=16, shuffle=False, collate_fn=custom_collate_fn) 
-
-    # construct model
-    model = LSTMModel(reduced_dim, hidden_size, segment, task, multi_task=multi_task, method=method)
-    
-    trainer = pl.Trainer(max_epochs=epoch)
-    trainer.fit(model, train_dataloader)
-    trainer.test(model, val_dataloader)
+    # calculate the total test reconstruction loss
+    def on_test_epoch_end(self):
+        avg_loss = torch.stack(self.test_losses).mean()
+        if self.multi_task:
+            loss_name = f'lstm_{self.task}_{self.method}_test_loss'
+        else:
+            loss_name = f'lstm_{self.task}_single_test_loss'
+        self.log(loss_name, avg_loss) 
+        self.test_losses.clear()
 
 
-if __name__ == '__main__':
-    main(1, 64, 64, 6, 'pose', multi_task=True, method='concat')
 

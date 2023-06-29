@@ -1,15 +1,18 @@
 import numpy as np
 
 from transformers import AutoTokenizer, AutoModel
+from lightning import LightningModule
 import torch
 
-class BERTProcessor():
+class BERTProcessor(LightningModule):
 
     def __init__(self):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        super().__init__()
 
-        self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-        self.model = AutoModel.from_pretrained("bert-base-uncased").to(self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased", use_fast=False)
+        self.model = AutoModel.from_pretrained("bert-base-uncased")
+        self.requires_grad=False
+        #self.model = torch.nn.DataParallel(self.model)
 
 
     def get_embeddings(self, batch_word):
