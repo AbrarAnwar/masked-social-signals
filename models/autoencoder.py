@@ -7,44 +7,17 @@ import os
 import copy
 
 from utils.dataset import *
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 from utils.normalize import *
 from utils.visualize import *
-
+import utils
+import wandb
+from lightning import seed_everything
 from lightning import LightningModule
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
+import yaml
 
-# 1-layer mlp hidden size 2340 -> 1024
-# 2-layer mlp 2340 -> 1024 -> 512 (768)
-# n-layer variable
-# gesture 640 -> 200
-# 768
-
-'''
-class Encoder(nn.Module):
-    def __init__(self, feature_dim, segment_length, reduced_dim):
-        super().__init__()
-        self.linear = nn.Sequential(
-                nn.Linear(segment_length*feature_dim, 128),
-                nn.ReLU(),
-                nn.Linear(128, reduced_dim)
-            )
-        
-    def forward(self, batch):
-        return self.linear(batch)
-    
-
-class Decoder(nn.Module):
-    def __init__(self, hidden_size, segment_length, feature_dim):
-        super().__init__()
-        self.linear = nn.Sequential(
-                nn.Linear(hidden_size, 128),
-                nn.ReLU(),
-                nn.Linear(128, segment_length*feature_dim)
-            )
-        
-    def forward(self, batch):
-        return self.linear(batch)
-'''
 
 class Encoder(nn.Module):
     def __init__(self, input_dim, hidden_sizes, activation=True):
@@ -88,66 +61,103 @@ class Decoder(nn.Module):
 class AutoEncoder(LightningModule):
     FEATURES = {'headpose':2, 'gaze':2, 'pose':26}
 
-    def __init__(self, task, segment, hidden_sizes, lr, weight_decay, batch_size):
+    def __init__(self, task, segment, hidden_sizes, alpha, lr, weight_decay, batch_size):
         super().__init__()
+        self.save_hyperparameters()
         self.task = task
         self.batch_length = 1080
         self.segment = segment
-        self.segment_length = int(self.batch_length / self.segment)
+        self.segment_length = int(self.batch_length / (2 * self.segment)) if self.task == 'pose' else int(self.batch_length / self.segment)
         self.hidden_size = copy.deepcopy(hidden_sizes)
         self.feature_dim = self.FEATURES[self.task]
         self.input_dim = self.segment_length * self.feature_dim
         self.encoder = Encoder(self.FEATURES[self.task] * self.segment_length, self.hidden_size)
         self.decoder = Decoder(self.segment_length * self.FEATURES[self.task], self.hidden_size[::-1])
+
+        self.alpha = alpha
     
         self.lr = lr
         self.weight_decay = weight_decay
-        self.batch_size = batch_size
 
         self.batch_size = batch_size
-        self.dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18')
-        train_size = int(0.8 * len(self.dataset))
-        self.train_dataset = Subset(self.dataset, range(0, train_size))
-        self.test_dataset = Subset(self.dataset, range(train_size, len(self.dataset)))
+        #dataset = MultiDataset('/data/tangyimi/batch_window36_stride18') 
+        dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18')
+
+        self.train_dataset, self.val_dataset, self.test_dataset = \
+                utils.random_split(dataset, [.8, .1, .1], generator=torch.Generator().manual_seed(42)) 
+        
+        self.normalizer = Normalizer(self.train_dataloader())
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=4, collate_fn=custom_collate_fn)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=8, shuffle=True, collate_fn=custom_collate_fn)
     
     def test_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=custom_collate_fn)
+        return DataLoader(self.val_dataset, batch_size=8, shuffle=True, collate_fn=custom_collate_fn)
     
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
     
     def on_train_start(self):
         self.normalizer = Normalizer(self.train_dataloader())
+        self.train_losses = []
 
     def forward(self, batch):
         batch[self.task] = self.normalizer.minmax_normalize(batch[self.task], self.task)
 
+        if self.task == 'pose':
+            batch[self.task] = smoothing(batch[self.task], self.batch_length).to(self.device)
+
         batch = batch[self.task]
         bz = batch.size(0)
-        # take 15fps
-        #batch = batch[:, :, ::2, :] # (bz, 3, 540, feature_dim)
+
+        y = batch.clone()
         batch = batch.reshape(bz, 3, self.segment, self.segment_length, batch.size(-1)) # (bz, 3, segment, segment_length, feature_dim)
 
         x = batch.reshape(bz*3*self.segment, -1)
         encoded = self.encoder(x)
         decoded = self.decoder(encoded)
 
-        decoded = decoded.reshape(bz, 3, self.segment, self.segment_length, -1)
-        return batch, decoded
+        decoded = decoded.reshape(bz, 3, self.segment*self.segment_length, -1)
+        return y, decoded
 
     def training_step(self, batch, batch_idx):
         y, y_hat = self(batch)
-        loss = F.mse_loss(y, y_hat, reduction='mean')
+        reconstruction_loss = F.mse_loss(y, y_hat, reduction='mean')
+        
+        y_vel = y[:, :, 1:, :] - y[:, :, :-1, :]
+        y_hat_vel = y_hat[:, :, 1:, :] - y_hat[:, :, :-1, :]
+        velocity_loss = F.mse_loss(y_vel, y_hat_vel, reduction='mean')
+        loss = reconstruction_loss + self.alpha * velocity_loss
+
+        self.train_losses.append(loss)
+        self.log('train_loss', loss, on_epoch=True, sync_dist=True)
         return loss
     
+    def on_train_epoch_end(self):
+        self.log('train_loss', torch.stack(self.train_losses).mean(), on_epoch=True, sync_dist=True)
+        self.train_losses.clear()
+
+    def on_validation_start(self):
+        self.val_losses = []
+
+    def validation_step(self, batch, batch_idx):
+        y, y_hat = self.forward(batch)
+        loss = F.mse_loss(y_hat, y, reduction='mean')
+        self.val_losses.append(loss)
+        return loss
+    
+    def on_validation_epoch_end(self):
+        self.log('val_loss', torch.stack(self.val_losses).mean(), on_epoch=True, sync_dist=True)
+        self.val_losses.clear()
+
     def on_test_start(self):
         self.test_losses = []
 
-        result_dir = f'./result/autoencoder/{self.task}/hidden{self.hidden_size}_lr{self.lr}_wd{self.weight_decay}'
-        model_dir = f'./pretrained/{self.task}/hidden{self.hidden_size}_lr{self.lr}_wd{self.weight_decay}'
+        result_dir = f'./result_autoencoder3/{self.task}/hidden{self.hidden_size}_lr{self.lr}_wd{self.weight_decay}_alpha{self.alpha}'
+        model_dir = f'./pretrained3/{self.task}/hidden{self.hidden_size}_lr{self.lr}_wd{self.weight_decay}_alpha{self.alpha}'
         if not os.path.exists(result_dir):
             os.makedirs(result_dir)
 
@@ -156,79 +166,84 @@ class AutoEncoder(LightningModule):
         
         self.result_dir = result_dir
         self.model_dir = model_dir
-        self.total_batches = len(self.test_dataloader())
         
     def test_step(self, batch, batch_idx):
         y, y_hat = self.forward(batch)
         loss = F.mse_loss(y_hat, y, reduction='mean')
         self.test_losses.append(loss)
-        
-        if batch_idx >= self.total_batches - 2:
-            output = 0
-            # take the last segment
-            y = y[:, :, -1, :, :].squeeze(2)
-            y_hat = y_hat[:, :, -1, :, :].squeeze(2) # (bz, 3, segment_length, feature_dim)
+        if batch_idx >=  self.trainer.num_test_batches[0] - 2:
+            if self.trainer.global_rank == 0:
+                y = y[:, :, -self.segment_length:, :] 
+                y_hat = y_hat[:, :, -self.segment_length:, :] 
+                file_name = f'{self.result_dir}/{batch_idx}'
+                visualize(self.task, self.normalizer, y, y_hat, file_name)
+            
 
-            # denormalize
-            y = self.normalizer.minmax_denormalize(y, self.task)
-            y_hat = self.normalizer.minmax_denormalize(y_hat, self.task)
-
-            videos_prediction = construct_batch_video(y_hat, task=self.task)
-            videos_inference = construct_batch_video(y, task=self.task, color=(0,0,255))
-
-            result_videos = np.concatenate([videos_prediction, videos_inference], axis=2)
-
-            for i in range(batch[self.task].shape[0]):
-                write_video(result_videos[i], f'{self.result_dir}/{batch_idx}_{output}.mp4', fps=30)
-                output += 1
-
-        return loss
     
     def on_test_epoch_end(self):
+        fps = 15 if self.task == 'pose' else 30
+        for filename in os.listdir(self.result_dir):
+            if filename.endswith('.mp4'):
+                self.logger.experiment.log({f'{self.task}_video': wandb.Video(os.path.join(self.result_dir, filename), fps=fps, format="mp4")})
+
         avg_loss = torch.stack(self.test_losses).mean()
         self.log(f'lr{self.lr}_hidden{self.hidden_size}_wd{self.weight_decay}_{self.task}_test_loss', avg_loss) 
         self.test_losses.clear()
-        # write the loss to json file
-        with open(f'{self.model_dir}/{avg_loss.item()}.txt', 'w') as f:
-            f.write(str(avg_loss.item()))
-
+        
         torch.save(self.encoder.state_dict(), f"{self.model_dir}/encoder.pth")
         torch.save(self.decoder.state_dict(), f"{self.model_dir}/decoder.pth")
 
 
 def main():
+    wandb_logger = WandbLogger(project="masked-social-signals")
+    hparams = wandb.config
+
+    seed_everything(hparams.seed)
+
+    torch.cuda.empty_cache()
+
+    model = AutoEncoder(task=hparams.task,
+                        segment=hparams.segment,
+                        hidden_sizes=hparams.hidden_sizes,
+                        alpha=hparams.alpha,
+                        lr=hparams.lr,
+                        weight_decay=hparams.weight_decay,
+                        batch_size=hparams.batch_size)
     
-    for task in ['headpose', 'gaze']:
-        model = AutoEncoder(task=task, segment=12, hidden_sizes=[128, 64], lr=3e-4, weight_decay=1e-5, batch_size=16)
-        trainer = pl.Trainer(max_epochs=10, strategy=DDPStrategy(find_unused_parameters=True), logger=True)
-        trainer.fit(model)
-        trainer.test(model)
-    '''
-    for hidden_size in [64, 128, 80]:
-        for lr in [1e-3, 3e-4, 1e-4, 3e-5, 1e-5]:
-            for weight_decay in [1e-3, 1e-4, 1e-5]:
-                model = AutoEncoder(task='pose', segment=12, hidden_size=hidden_size, lr=lr, weight_decay=weight_decay, batch_size=16)
-                trainer = pl.Trainer(max_epochs=10, strategy=DDPStrategy(find_unused_parameters=True), logger=True)
-                trainer.fit(model)
-                trainer.test(model)
+    print(f'\nGrid Search on {hparams.model} model hidden_sizes={hparams.hidden_sizes} lr={hparams.lr} weight_decay={hparams.weight_decay} alpha={hparams.alpha}\n')
+
+    name = f'{hparams.model}_lr{hparams.lr}_hidden{hparams.hidden_sizes}_wd{hparams.weight_decay}_alpha{hparams.alpha}'
+    wandb_logger.experiment.name = name
+
+    checkpoint_path = f'./checkpoints/{hparams.model}/lr{hparams.lr}_hidden{hparams.hidden_sizes}_wd{hparams.weight_decay}_alpha{hparams.alpha}'
+    if not os.path.exists(checkpoint_path):
+        os.makedirs(checkpoint_path)
+
+    checkpoint_callback = ModelCheckpoint(
+        monitor='val_loss',
+        mode='min',
+        dirpath=checkpoint_path,
+        filename='best',
+        save_top_k=1,
+    )
+    trainer = pl.Trainer(accelerator='gpu',
+                         callbacks=[checkpoint_callback],
+                         max_epochs=hparams.epoch, 
+                         logger=wandb_logger,
+                         num_sanity_val_steps=0,
+                         strategy=DDPStrategy(find_unused_parameters=True))
+    trainer.fit(model)
     
-    for hidden_sizes in [[512], [512, 256], [768, 512], [768, 256], [768, 512, 256]]:
-        for lr in [1e-3, 3e-4, 1e-4, 3e-5, 1e-5]:
-            for weight_decay in [1e-3, 1e-4, 1e-5]:
-                print(f'\n Testing {hidden_sizes}\n')
-                model = AutoEncoder(task='pose', segment=24, hidden_sizes=hidden_sizes, lr=lr, weight_decay=weight_decay, batch_size=16)
-                trainer = pl.Trainer(max_epochs=10, strategy=DDPStrategy(find_unused_parameters=True), logger=True)
-                trainer.fit(model)
-                trainer.test(model)
-    
-    for hidden_sizes in [[768, 256], [512]]:
-        model = AutoEncoder(task='pose', segment=12, hidden_sizes=hidden_sizes, lr=3e-4, weight_decay=1e-5, batch_size=16)
-        trainer = pl.Trainer(max_epochs=10, strategy=DDPStrategy(find_unused_parameters=True), logger=True)
-        trainer.fit(model)
-        trainer.test(model)
-    '''
+    best_model_path = checkpoint_callback.best_model_path
+    best_model = AutoEncoder.load_from_checkpoint(best_model_path)
+    trainer.test(best_model)
+
         
 if __name__ == '__main__':
-    main()
+    with open('cfgs/autoencoder.yaml', 'r') as f:
+        sweep_config = yaml.safe_load(f)
+
+    sweep_id = wandb.sweep(sweep=sweep_config, project="masked-social-signals")
+    wandb.agent(sweep_id, function=main)
 
 

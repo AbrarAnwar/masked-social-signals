@@ -66,14 +66,14 @@ def construct_batch_video(batch, task, color=(255,0,0)):
     # batch shape (16, 3, 180, 2)
     batch_frames = []
     for i in range(batch.shape[0]):
-        each_bacth = batch[i]
+        each_batch = batch[i]
         frames = []
 
-        for j in range(each_bacth.shape[1]):
+        for j in range(each_batch.shape[1]):
             people_image = []
 
-            for k in range(each_bacth.shape[0]):
-                person = each_bacth[k][j]
+            for k in range(each_batch.shape[0]):
+                person = each_batch[k][j]
                 
                 if task == 'pose':
                     blank = create_image(600, 500)
@@ -90,6 +90,21 @@ def construct_batch_video(batch, task, color=(255,0,0)):
     return np.array(batch_frames)
 
 
+def visualize(task, normalizer, y, y_hat, file_name):
+    output = 0
+    fps = 15 if task == 'pose' else 30
+    current_y = normalizer.minmax_denormalize(y, task)
+    current_y_hat = normalizer.minmax_denormalize(y_hat, task)
+
+    videos_prediction = construct_batch_video(current_y_hat, task=task)
+    videos_inference = construct_batch_video(current_y, task=task, color=(0,0,255))
+
+    result_videos = np.concatenate([videos_prediction, videos_inference], axis=2)
+
+    for i in range(current_y.size(0)):
+        new_file_name = file_name + '_' + str(output) + '.mp4'
+        write_video(result_videos[i], new_file_name, fps)
+        output += 1
 
 #if __name__ == '__main__':
     #frames = []

@@ -1,0 +1,57 @@
+method: 'grid'
+
+metric: 
+    name: 'val_loss'
+    goal: 'minimize'   
+
+parameters: 
+    seed:
+      value: 42
+
+    model: 
+      value: 'transformer'
+    hidden_size: 
+      value: 256
+    segment:
+      value: 12
+    task:
+      value: 'pose'
+    frozen:
+      values: [True, False]
+    multi_task:
+      value: True
+    mask_ratio:
+      value: 0.3333333
+    eval_type:
+      value: 2
+    pretrained:
+      value: True
+    feature_filling:
+      values: ['repeat', 'pad']
+
+    lr: 
+      values: [1e-3, 3e-3, 5e-3, 1e-4, 3e-4]
+    weight_decay: 
+      value: 1e-5
+    warmup_ratio:
+      values: [0.1, 0.2]
+    batch_size:
+      value: 16
+    alpha:
+      value: 1
+
+    n_layer:
+      value: 6
+    n_head:
+      value: 8
+    activation_function: 
+      value: 'relu'
+    n_ctx:
+      value: 144
+    resid_pdrop:
+      value: 0.1
+    attn_pdrop:
+      value: 0.1
+
+    epoch:
+      value: 20

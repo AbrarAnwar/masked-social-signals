@@ -43,7 +43,7 @@ train:
 
   objectives: ['headpose']
 
-  log: False
+  log: True
 
   seed: 0
 
@@ -51,7 +51,7 @@ train:
 
   ckpt_path: None
 
-  batch_size: 32
+  batch_size: 16
   epochs: 100
   save_period: 1
   validate_every_n_epoch: 3

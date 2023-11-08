@@ -2,99 +2,73 @@ from models.lstm import *
 from models.transformer import *
 from lightning import seed_everything
 import lightning.pytorch as pl
-import argparse
-
-def construct_args():
-    parser = argparse.ArgumentParser()
-    # model
-    parser.add_argument('--model', type=str, default=None, help='lstm, transformer')
-    # hyperparameters
-    parser.add_argument('--task', type=str, default=None, help='headpose, gaze, pose')
-    parser.add_argument('--method', type=str, default='concat', help='concat, maxpool')
-    parser.add_argument('--multi_task', '--mt', action='store_true', help='multi task')
-    parser.add_argument('--mask_ratio', type=float, default=1/3, help='masking ratio (only for transformer multi task)')
-    parser.add_argument('--mask_strategy', type=int, default=1, help='1=random masking, 2=masking random one at each timestep (only for transformer multi task)')
-    parser.add_argument('--eval_type', type=int, default=1, help='masking setting when evaluating (only for transformer multi task)')
-    parser.add_argument('--segment', type=int, default=12, help='segment length')
-    parser.add_argument('--reduced_dim', type=int, default=64, help='reduced dimension')
-    parser.add_argument('--hidden_size', type=int, default=64, help='hidden size')
-    parser.add_argument('--pretrained', '--pt', action='store_true', help='use pretrained autoencoder')
-
-    # optimizer
-    parser.add_argument('--lr', type=float, default=3e-4, help='learning rate')
-    parser.add_argument('--weight_decay', '--wd', type=float, default=1e-5, help='weight decay')
-    parser.add_argument('--warmup_steps', type=int, default=500, help='warmup step')
-    parser.add_argument('--grad_norm_clip', type=float, default=1.0, help='gradient norm clipping')
-    parser.add_argument('--batch_size', '--bz', type=int, default=16, help='batch size')
-    parser.add_argument('--epoch', type=int, default=10, help='epoch')
-    
-    # transformer
-    parser.add_argument('--n_layer', type=int, default=6, help='number of layers')
-    parser.add_argument('--n_head', type=int, default=8, help='number of heads')
-    parser.add_argument('--activation_function', type=str, default='relu', help='activation function')
-    parser.add_argument('--n_positions', type=int, default=512, help='number of position')
-    parser.add_argument('--n_ctx', type=int, default=512, help='number of context')
-    parser.add_argument('--attn_pdrop', type=float, default=0.1, help='attention dropout')
-    parser.add_argument('--resid_pdrop', type=float, default=0.1, help='residual dropout')
-
-    # seed
-    parser.add_argument('--seed', type=int, default=42, help='random seed')
-
-    args = parser.parse_args()
-
-    return vars(args)
+import wandb
+import yaml
+from lightning.pytorch.callbacks import ModelCheckpoint
 
 def main():
-    args = construct_args()
-    seed_everything(args['seed'])
+    wandb_logger = WandbLogger(project="masked-social-signals")
+    hparams = wandb.config
+
+    seed_everything(hparams.seed)
 
     torch.cuda.empty_cache()
+    
+    model = MaskTransformer(hidden_size=hparams.hidden_size,
+                            segment=hparams.segment,
+                            task=hparams.task,
+                            frozen=hparams.frozen,
+                            multi_task=hparams.multi_task,
+                            mask_ratio=hparams.mask_ratio,
+                            eval_type=hparams.eval_type,
+                            pretrained=hparams.pretrained,
+                            feature_filling=hparams.feature_filling,
+                            lr=hparams.lr,
+                            weight_decay=hparams.weight_decay,
+                            warmup_ratio=hparams.warmup_ratio,
+                            batch_size=hparams.batch_size,
+                            alpha=hparams.alpha,
+                            n_layer=hparams.n_layer,
+                            n_head=hparams.n_head,
+                            n_inner=hparams.hidden_size*4,
+                            activation_function=hparams.activation_function,
+                            n_ctx=hparams.n_ctx,
+                            resid_pdrop=hparams.resid_pdrop,
+                            attn_pdrop=hparams.attn_pdrop)
 
-    if args['model'] == 'lstm':
-        model = LSTMModel(reduced_dim=args['reduced_dim'], 
-                     hidden_size=args['hidden_size'], 
-                     segment=args['segment'], 
-                     task=args['task'], 
-                     multi_task=args['multi_task'], 
-                     method=args['method'], 
-                     pretrained=args['pretrained'],
-                     lr=args['lr'],
-                     weight_decay=args['weight_decay'],
-                     warmup_steps=args['warmup_steps'],
-                     batch_size=args['batch_size'])
-        
-    elif args['model'] == 'transformer':
-        model = MaskTransformer(hidden_size=args['hidden_size'],
-                                segment=args['segment'],
-                                task=args['task'],
-                                multi_task=args['multi_task'],
-                                mask_ratio=args['mask_ratio'],
-                                mask_strategy=args['mask_strategy'],
-                                eval_type=args['eval_type'],
-                                pretrained=args['pretrained'],
-                                lr=args['lr'],
-                                weight_decay=args['weight_decay'],
-                                warmup_steps=args['warmup_steps'],
-                                batch_size=args['batch_size'],
-                                n_layer=args['n_layer'], 
-                                n_head=args['n_head'], 
-                                n_inner=args['hidden_size']*4,
-                                activation_function=args['activation_function'],
-                                n_positions=args['n_positions'],
-                                n_ctx=args['n_ctx'],
-                                resid_pdrop=args['resid_pdrop'],
-                                attn_pdrop=args['attn_pdrop'])
-    else:
-        raise NotImplementedError('model not implemented')
 
-    trainer = pl.Trainer(max_epochs=args['epoch'], logger=True, gradient_clip_val=args['grad_norm_clip'])
+    print(f'\nGrid Search on {hparams.model} model lr={hparams.lr} eval{hparams.eval_type} feature{hparams.feature_filling} frozen{hparams.frozen}\n')
+ 
+    name = f'{hparams.model}_lr{hparams.lr}_layer{hparams.n_layer}_head{hparams.n_head}'
+    wandb_logger.experiment.name = name
+
+    checkpoint_path = f'./checkpoints_multi/{hparams.model}/lr{hparams.lr}_eval{hparams.eval_type}_feature{hparams.feature_filling}_frozen{hparams.frozen}/'
+    if not os.path.exists(checkpoint_path):
+        os.makedirs(checkpoint_path)
+
+    checkpoint_callback = ModelCheckpoint(
+        monitor='val_loss',
+        mode='min',
+        dirpath=checkpoint_path,
+        filename='best',
+        save_top_k=1,
+    )
+    trainer = pl.Trainer(accelerator='gpu',
+                         callbacks=[checkpoint_callback],
+                         max_epochs=hparams.epoch, 
+                         logger=wandb_logger,
+                         num_sanity_val_steps=0,
+                         strategy=DDPStrategy(find_unused_parameters=True))
     trainer.fit(model)
-    trainer.test(model)
+    
+    best_model_path = checkpoint_callback.best_model_path
+    best_model = MaskTransformer.load_from_checkpoint(best_model_path)
+    trainer.test(best_model)
 
 if __name__ == '__main__':
-    main()
-    
+    with open('cfgs/multi.yaml', 'r') as f:
+        sweep_config = yaml.safe_load(f)
 
+    sweep_id = wandb.sweep(sweep=sweep_config, project="masked-social-signals")
 
-
-    
+    wandb.agent(sweep_id, function=main)

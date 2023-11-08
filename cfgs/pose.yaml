@@ -1,0 +1,40 @@
+method: 'grid'
+metric:
+  name: 'val_loss'
+  goal: 'minimize'   
+
+parameters:
+  model:
+    value: 'transformer'
+  hidden_size:
+    value: 256
+  segment:
+    value: 12
+  mask_strategy:
+    value: 2
+  frozen:
+    values: [True, False]
+  lr:
+    values: [0.001, 0.003]
+  weight_decay:
+    value: 1e-5
+  warmup_steps:
+    value: 1000
+  batch_size:
+    value: 16
+  alpha:
+    values: [1.0, 0.5, 0.3]
+  n_layer:
+    value: 6
+  n_head:
+    values: [4,8]
+  activation_function:
+    value: 'relu'
+  n_ctx:
+    value: 36
+  resid_pdrop:
+    value: 0.1
+  attn_pdrop:
+    value: 0.1
+  epoch:
+    value: 20

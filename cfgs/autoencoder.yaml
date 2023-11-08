@@ -1,0 +1,31 @@
+method: 'grid'
+
+metric: 
+    name: 'val_loss'
+    goal: 'minimize'   
+
+parameters: 
+    seed:
+      value: 42
+
+    model: 
+      value: 'autoencoder'
+    task:
+      value: 'pose'
+    segment:
+      value: 12
+    hidden_sizes: 
+      value: [768,256]
+    alpha:
+      value: 0
+    lr: 
+      values: [1e-3, 3e-4, 1e-4, 3e-5, 1e-5]
+    weight_decay: 
+      values: [1e-4, 1e-5]
+  
+    batch_size:
+      value: 8
+    
+
+    epoch:
+      value: 20
