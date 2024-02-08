@@ -2,15 +2,18 @@ import json
 import pathlib
 import csv
 import numpy as np
+import pandas as pd
 from scipy.interpolate import interp1d
 
 word_dir = 'dining_dataset/words/v1/'
 gaze_dir = 'dining_dataset/processed_gazes/'
 status_dir = 'dining_dataset/upsampled-person-speaking/'
 keypoints_dir = 'vision_openpose_features/'
+bite_time = 'dining_dataset/bite_time.csv'
 
 process_gazepose_dir = 'dining_dataset/full_gazes/'
 process_keypoints_dir = 'dining_dataset/full_keypoints/'
+process_bite_dir = 'dining_dataset/processed_bite/'
 clean_keypoints_dir = 'dining_dataset/clean_keypoints/'
 
 def calculate_length():
@@ -231,6 +234,29 @@ def clean_pose():
             np.savez(clean_file, pose=new_pose)
 
             
+def process_bite(length_list):
+    print('Processing bite time...')
+    # read csv
+    bite = pd.read_csv(bite_time)
+
+    for i in range(30):
+        print('Processing bite: {}'.format(i+1))
+        if i+1 == 9:
+            continue
+
+        frame_length = length_list[i]
+
+        video_array = np.zeros((frame_length, 3))
+        video_df = bite[bite['Session Number'] == i+1]
+
+        for _, row in video_df.iterrows():
+            person = int(row['Person Number']) - 1
+            start_frame = int(row['Start Frame'])
+            video_array[start_frame, person] = 1
+        
+        process_bite = process_bite_dir + '{:02d}'.format(i+1) + '.npz'
+        np.savez(process_bite, bite=video_array)
+
 
 
 
@@ -239,6 +265,7 @@ if __name__ == '__main__':
     #check_length(total_length, True)
     #process_gazepose(total_length)
     #process_keypoints(total_length)
-    clean_pose()
+    #clean_pose()
+    #process_bite(total_length)
     
 

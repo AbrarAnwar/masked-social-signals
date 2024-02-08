@@ -2,12 +2,13 @@ import json
 from pathlib import Path
 import csv
 import numpy as np
+import os
 from words import seconds_to_frame
 
 word_dir = 'dining_dataset/words/v1/'
 gaze_dir = 'dining_dataset/full_gazes/'
-status_dir = 'dining_dataset/upsampled-person-speaking/'
 keypoints_dir = 'dining_dataset/clean_keypoints/'
+bite_time = 'dining_dataset/processed_bite/'
 
 # write to jsonline file 9k lines
 # {id , word, status_speaker, whisper_speaker, gaze:, headpose, body, face}
@@ -63,21 +64,31 @@ def read_keypoint():
 
         yield result
 
+def read_bite():
+    for i in range(30):
+        if i+1 == 9:
+            continue
+        bite_path = bite_time + '{:02d}'.format(i+1) + '.npz'
+        bite = np.load(bite_path)['bite']
+
+        yield bite
+
+
 def write_to_batch(window_size, stride_size, is_second=True):
-    count = 0
     window, stride = (seconds_to_frame(window_size), seconds_to_frame(stride_size)) if is_second else (window_size, stride_size)
 
     # create directory for batch
-    target_dir = 'dining_dataset/batch_window{}_stride{}/'.format(window_size, stride_size)
+    target_dir = 'dining_dataset/batch_window{}_stride{}_v3/'.format(window_size, stride_size)
     target = Path(target_dir)
     target.mkdir(parents=True, exist_ok=True)
 
-    for (idx, words), headpose_gaze, pose in zip(read_word(), read_gazepose(), read_keypoint()):
+    for (idx, words), headpose_gaze, pose, bite in zip(read_word(), read_gazepose(), read_keypoint(), read_bite()):
         print(idx+1)
+        
+        assert len(words) == headpose_gaze[0][0].shape[0] == headpose_gaze[1][0].shape[0] == headpose_gaze[2][0].shape[0] == pose[0].shape[0] == pose[1].shape[0] == pose[2].shape[0] == bite.shape[0], \
+            'Inconsistent! word_length: {}, headpose_length: {}, pose_length: {}, bite_length: {}'.format(len(words), headpose_gaze[0][0].shape[0], pose[0].shape[0], bite.shape[0])
 
-        assert len(words) == headpose_gaze[0][0].shape[0] == headpose_gaze[1][0].shape[0] == headpose_gaze[2][0].shape[0] == pose[0].shape[0] == pose[1].shape[0] == pose[2].shape[0], \
-            'Inconsistent! word_length: {}, headpose_length: {}, pose_length: {}'.format(len(words), headpose_gaze[0][0].shape[0], pose[0].shape[0])
-
+        count = 0
         start = 0
         #print('start')
         while start < len(words) - stride:
@@ -88,7 +99,7 @@ def write_to_batch(window_size, stride_size, is_second=True):
                 end = len(words)
                 if end - start < window:
                     start = end - window
-            each_person = [{'word':[], 'status_speaker': [],'whisper_speaker': [], 'headpose': [], 'gaze': [], 'pose': []} for _ in range(3)]
+            each_person = [{'word':[], 'status_speaker': [],'whisper_speaker': [], 'headpose': [], 'gaze': [], 'pose': [], 'bite': []} for _ in range(3)]
             
             # word
             word_segment = words[start:end]
@@ -108,19 +119,28 @@ def write_to_batch(window_size, stride_size, is_second=True):
                 each_person[i]['whisper_speaker'] = whisper[i+1]
             
             
-            # headpose, gaze, and pose
+            # headpose, gaze, pose, and bite (shape = (segment, feature_dim))
             headpose_segment = [headpose[start:end] for headpose, _ in headpose_gaze]
             gaze_segment = [gaze[start:end] for _, gaze in headpose_gaze]
             pose_segment = [pose[start:end] for pose in pose]
+            bite_segment = bite[start:end]
 
             for i in range(3):
                 each_person[i]['headpose'] = np.array(headpose_segment[i])
                 each_person[i]['gaze'] = np.array(gaze_segment[i])
                 each_person[i]['pose'] = np.array(pose_segment[i])
+                each_person[i]['bite'] = bite_segment[:, i]
             
             # save to npz file
             save_dict = {}
-            target_path = target_dir + '{:d}.npz'.format(count)
+            target_sub_dir = target_dir + '{:02d}/'.format(idx+1) 
+            
+            # make dir
+            if not os.path.exists(target_sub_dir):
+                os.makedirs(target_sub_dir)
+
+            target_path = target_sub_dir + '{:d}.npz'.format(count)
+
             for i, person_data in enumerate(each_person):
                 for key, array in person_data.items():
                     save_dict[f'person_{i}_{key}'] = array
@@ -133,3 +153,4 @@ def write_to_batch(window_size, stride_size, is_second=True):
 
 if '__main__' == __name__:  
     write_to_batch(36, 18)
+    #write_to_batch(9, 5)

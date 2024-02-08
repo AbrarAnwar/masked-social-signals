@@ -18,13 +18,11 @@ from utils.dataset import *
 from utils.visualize import *
 from utils.embeddings import *
 from utils.normalize import *
-import utils
+from utils.utils import *
 import wandb
 
+from lightning import seed_everything
 
-def freeze(model):
-    for param in model.parameters():
-        param.requires_grad = False
 
 class MaskTransformer(LightningModule):
     FEATURES = {'word':768, 'headpose':2, 'gaze':2, 'pose':26}
@@ -35,7 +33,6 @@ class MaskTransformer(LightningModule):
             segment,
             task,
             frozen,
-            multi_task,
             mask_ratio,
             eval_type,
             pretrained,
@@ -48,17 +45,15 @@ class MaskTransformer(LightningModule):
             **kwargs
     ):
         super().__init__()
-        assert multi_task or task is not None, 'task should be specified in single task setting'
-        #assert eval_type==2 or task is not None, 'task should be specified in single task setting'
         self.save_hyperparameters()
 
         self.task = task
         self.hidden_size = hidden_size
+        self.small_hidden_size = 128 # for headpose and gaze, depends on pretrained autoencoders
         self.frozen = frozen
         self.segment = segment
-        self.batch_length = 1080
+        self.batch_length = 1080 # 270
         self.segment_length = int(self.batch_length / self.segment)
-        self.multi_task = multi_task
         self.mask_ratio = mask_ratio
         self.eval_type = eval_type # in multi task setting, 1 = mask one task at the last timestep, 2 = mask certain features for all samples
         self.pretrained = pretrained
@@ -67,61 +62,32 @@ class MaskTransformer(LightningModule):
         self.processors = BERTProcessor()
         self.embed_timestep = nn.Embedding(self.segment, self.hidden_size)
         self.embed_speaker = nn.Embedding(4, self.hidden_size)
-        self.task_list = ['headpose', 'gaze', 'pose', 'word'] # status_speaker
+        self.task_list = ['headpose', 'gaze', 'pose', 'word'] # bite time
 
-        self.encoder = nn.ModuleList([Encoder(self.FEATURES['headpose'] * self.segment_length, [128, 64]),
-                                    Encoder(self.FEATURES['gaze'] * self.segment_length, [128, 64]),
-                                    Encoder(self.FEATURES['pose'] * self.segment_length // 2, [768, self.hidden_size]), # fps 15
-                                    Encoder(self.FEATURES['word'] * self.segment_length, [128, self.hidden_size])])
+        self.encoder = nn.ModuleList([Encoder(self.FEATURES['headpose'] * 90, [self.small_hidden_size]),
+                                    Encoder(self.FEATURES['gaze'] * 90, [self.small_hidden_size]),
+                                    Encoder(self.FEATURES['pose'] * 45, [self.hidden_size]), # fps 15
+                                    Encoder(self.FEATURES['word'] * 90, [self.hidden_size])])
+        
+        self.decoder = nn.ModuleList([Decoder(self.FEATURES['headpose'] * 90, [self.small_hidden_size]),
+                                        Decoder(self.FEATURES['gaze'] * 90, [self.small_hidden_size]),
+                                        Decoder(self.FEATURES['pose'] * 45, [self.hidden_size])])
 
         if self.pretrained:
             for task_idx, task in enumerate(self.task_list[:-2]):
-                self.encoder[task_idx].load_state_dict(torch.load(f"/home/tangyimi/masked_mine/pretrained/{task}/hidden[128, 64]_lr0.0003_wd1e-05/encoder.pth"))
+                self.encoder[task_idx].load_state_dict(torch.load(f"/home/tangyimi/masked_mine/pretrained_best/{task}/encoder.pth"))
+                self.decoder[task_idx].load_state_dict(torch.load(f"/home/tangyimi/masked_mine/pretrained_best/{task}/decoder.pth"))
             
-            # load pose encoder
-            self.encoder[2].load_state_dict(torch.load(f"/home/tangyimi/masked_mine/pretrained3/pose/hidden[768, 256]_lr0.0003_wd1e-05_alpha0/encoder.pth"))
-
-        if self.frozen:
-            for encoder in self.encoder:
-                freeze(encoder)
-
-        if self.multi_task:
-            self.decoder = nn.ModuleList([Decoder(self.FEATURES['headpose'] * self.segment_length, [64, 128]),
-                                            Decoder(self.FEATURES['gaze'] * self.segment_length, [64, 128]),
-                                            Decoder(self.FEATURES['pose'] * self.segment_length // 2, [self.hidden_size, 768])])
-
-            if self.pretrained:
-                for task_idx, task in enumerate(self.task_list[:-2]):
-                    self.decoder[task_idx].load_state_dict(torch.load(f"/home/tangyimi/masked_mine/pretrained/{task}/hidden[128, 64]_lr0.0003_wd1e-05/decoder.pth"))
-                      
-                # load pose decoder
-                self.decoder[2].load_state_dict(torch.load(f"/home/tangyimi/masked_mine/pretrained3/pose/hidden[768, 256]_lr0.0003_wd1e-05_alpha0/decoder.pth"))
-                
             if self.frozen:
-                for decoder in self.decoder:
+                for encoder, decoder in zip(self.encoder, self.decoder):
+                    freeze(encoder)
                     freeze(decoder)
                     
-            # for later random masking
-            feature_indices = torch.arange(len(self.task_list)*self.segment) % len(self.task_list)
-            feature_mask = feature_indices < len(self.task_list) - 1
-            self.feature_indices = torch.nonzero(feature_mask).squeeze()
-
-        else:
-            if self.task == 'pose':
-                self.decoder = Decoder(self.FEATURES[self.task] * self.segment_length // 2, [self.hidden_size, 768])
-
-            else:
-                self.decoder = Decoder(self.FEATURES[self.task] * self.segment_length, [self.hidden_size, 128])
-
-            if self.pretrained:
-                if self.task == 'pose':
-                    self.decoder.load_state_dict(torch.load(f"/home/tangyimi/masked_mine/pretrained3/pose/hidden[768, 256]_lr0.0003_wd1e-05_alpha0/decoder.pth"))
-                else:
-                    self.decoder.load_state_dict(torch.load(f"/home/tangyimi/masked_mine/pretrained/{self.task}/hidden[128, 64]_lr0.0003_wd1e-05/decoder.pth"))
-            
-            if self.frozen:
-                freeze(self.decoder)
-
+        # for later random masking
+        # TODO
+        feature_indices = torch.arange(len(self.task_list)*self.segment) % len(self.task_list)
+        feature_mask = feature_indices < len(self.task_list) - 1
+        self.feature_indices = torch.nonzero(feature_mask).squeeze()
 
         config = transformers.GPT2Config(
             vocab_size=1,  # doesn't matter -- we don't use the vocab
@@ -137,11 +103,18 @@ class MaskTransformer(LightningModule):
 
         # load data
         self.batch_size = batch_size
-        #dataset = MultiDataset('/data/tangyimi/batch_window36_stride18') 
-        dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18')
+        self.val_batch_size = 8
 
-        self.train_dataset, self.val_dataset, self.test_dataset = \
-                utils.random_split(dataset, [.8, .1, .1], generator=torch.Generator().manual_seed(42)) 
+        train_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18_v2', 30, training=True)
+        #train_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window9_stride5_v2', 30, training=True)
+
+        split = int(0.8 * len(train_dataset))
+        train_indices = list(range(split))
+        val_indices = list(range(split, len(train_dataset)))
+
+        self.train_dataset = Subset(train_dataset, train_indices)
+        self.val_dataset = Subset(train_dataset, val_indices)
+        self.test_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18_v2', 30, training=False)
         
         self.normalizer = Normalizer(self.train_dataloader())
         
@@ -150,10 +123,10 @@ class MaskTransformer(LightningModule):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
     
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=8, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
+        return DataLoader(self.val_dataset, batch_size=self.val_batch_size, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
     
     def test_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=8, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
+        return DataLoader(self.val_dataset, batch_size=self.val_batch_size, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
@@ -174,7 +147,6 @@ class MaskTransformer(LightningModule):
         return self.lr * lr_mult
             
     def on_train_start(self):
-        self.normalizer = Normalizer(self.train_dataloader())
         self.train_losses = []
         self.testing = False
 
@@ -192,27 +164,36 @@ class MaskTransformer(LightningModule):
         for task_idx, task in enumerate(self.task_list):
             current = batch[task]
             if task == 'pose':
-                # current = current[:, :, ::2, :] # 15fps
                 segment_length = self.segment_length // 2
             else:
                 segment_length = self.segment_length
 
             current = current.reshape(bz, 3, self.segment, segment_length, current.size(-1)) # (bz, 3, 6, 180, feature_dim)
+            # speaker: (bz, 3, 12, 90)
+
+            if not self.testing:
+                shuffled_people = torch.randperm(3) # data augmentation
+                current = current[:, shuffled_people, ...]
+
             original.append(current.clone()) 
 
             current_reshaped = current.reshape(bz*3*self.segment, -1) # (bz*3*6, 180, 2)
             
             encode = self.encoder[task_idx](current_reshaped).view(bz*3, self.segment, -1) # (bz*3, 6, hidden_size)
 
-            if task in {'headpose', 'gaze'}:
-                
+            # Masking non-relevant feature
+            if self.task is not None:
+                if task != self.task:
+                    encode = torch.zeros(encode.shape).to(self.device)
+
+            if task in ['headpose', 'gaze']:
                 if self.feature_filling == 'pad':
-                    encode = F.pad(encode, (0, self.hidden_size - 64))
+                    encode = F.pad(encode, (0, self.hidden_size - self.small_hidden_size))
                 elif self.feature_filling == 'repeat':
-                    factor = self.hidden_size // 64
+                    factor = self.hidden_size // self.small_hidden_size
                     encode = torch.cat([encode]*factor, dim=2)
                 else:
-                    raise NotImplementedError('feature filling should be either pad or repeat')
+                    raise NotImplementedError('Feature filling should be either pad or repeat')
 
             encode_list.append(encode)
         
@@ -237,7 +218,7 @@ class MaskTransformer(LightningModule):
                 if task == 'pose':
                     segment_length = self.segment_length // 2   
                 else:
-                    task_output = task_output[:, :, :64]
+                    task_output = task_output[:, :, :self.small_hidden_size]
                     segment_length = self.segment_length
 
                 task_output_reshaped = task_output.reshape(bz*3*self.segment, -1)
@@ -259,18 +240,17 @@ class MaskTransformer(LightningModule):
             mask_task_flat = (mask_indices % len(self.task_list)).reshape(-1)
             batch_indices_flat = batch_indices.reshape(-1)
             mask_indices_flat = mask_indices.reshape(-1)
-
+            
             # Each has shape of (k, 2) where k is the number of masked features. 2 means (batch_index, mask_index in this sequence)
             # Assumption: each task has at least one masked position. (Thus, did not handle no masked position case)
             for task_idx, task in enumerate(self.task_list[:-1]):
                 current_indices = torch.stack((batch_indices_flat[mask_task_flat==task_idx], mask_indices_flat[mask_task_flat==task_idx]), dim=1) # (k, 2)
-
                 current_output = output[current_indices[:, 0], current_indices[:, 1], :] # (k, hidden_size)
                 
                 if task == 'pose':
                     segment_length = self.segment_length // 2
                 else:
-                    current_output = current_output[:, :64]
+                    current_output = current_output[:, :self.small_hidden_size]
                     segment_length = self.segment_length
                 
                 current_reconstructed = self.decoder[task_idx](current_output)\
@@ -285,11 +265,11 @@ class MaskTransformer(LightningModule):
                 y_hats.append(current_reconstructed)
                 ys.append(original_y)
             
-
         return ys, y_hats
         
 
     def forward(self, batch):
+        
         for task in self.task_list[:-1]:
             batch[task] = self.normalizer.minmax_normalize(batch[task], task)
 
@@ -297,36 +277,33 @@ class MaskTransformer(LightningModule):
     
     def training_step(self, batch, batch_idx):
         y, y_hat = self.forward(batch)
-        if self.multi_task:
-            losses = [] 
-            for task_idx, task in enumerate(self.task_list[:-1]):
-                current_y, current_y_hat = y[task_idx], y_hat[task_idx]
-                reconstruct_loss = F.mse_loss(current_y, current_y_hat, reduction='mean')
-                # calculate velocity loss
-                y_vel = current_y[:, :, 1:, :] - current_y[:, :, :-1, :]
-                y_hat_vel = current_y_hat[:, :, 1:, :] - current_y_hat[:, :, :-1, :]
-                velocity = F.mse_loss(y_vel, y_hat_vel, reduction='mean')
-                task_loss = reconstruct_loss + self.alpha * velocity
+        losses = [] 
+        for task_idx, task in enumerate(self.task_list[:-1]):
+            current_y, current_y_hat = y[task_idx], y_hat[task_idx]
+            reconstruct_loss = F.mse_loss(current_y, current_y_hat, reduction='mean')
+            # calculate velocity loss
+            y_vel = current_y[:, :, 1:, :] - current_y[:, :, :-1, :]
+            y_hat_vel = current_y_hat[:, :, 1:, :] - current_y_hat[:, :, :-1, :]
+            velocity = F.mse_loss(y_vel, y_hat_vel, reduction='mean')
+            task_loss = reconstruct_loss + self.alpha * velocity
+            self.log(f'train_loss/{task}', task_loss, on_epoch=True, sync_dist=True)
 
-                self.log(f'train_loss/{task}', task_loss, on_epoch=True, sync_dist=True)
-                losses.append(task_loss)
-            loss = torch.stack(losses).mean()
-            self.train_losses.append(losses)
+            losses.append(task_loss)
+        self.train_losses.append(losses)
+
+        if self.task is not None:
+            loss = losses[self.task_list.index(self.task)]
         else:
-            loss = F.mse_loss(y_hat, y, reduction='mean')
-            self.train_losses.append(loss)
-            self.log('train_loss', loss, on_epoch=True, sync_dist=True)
+            loss = torch.stack(losses).mean()
+        
         return loss
     
     def on_training_epoch_end(self):
-        if self.multi_task:
-            for task_idx, task in enumerate(self.task_list[:-1]):
-                self.log(f'train_loss/{task}', 
-                         torch.stack([loss[task_idx] for loss in self.train_losses]).mean(), 
-                         on_epoch=True, 
-                         sync_dist=True)
-        else:
-            self.log('train_loss', torch.stack(self.train_losses).mean(), on_epoch=True, sync_dist=True)
+        for task_idx, task in enumerate(self.task_list[:-1]):
+            self.log(f'train_loss/{task}', 
+                        torch.stack([loss[task_idx] for loss in self.train_losses]).mean(), 
+                        on_epoch=True, 
+                        sync_dist=True)
     
 
     def on_validation_start(self):
@@ -334,71 +311,59 @@ class MaskTransformer(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         y, y_hat = self.forward(batch)
-        if self.multi_task:
-            losses = []
-            for task_idx, _ in enumerate(self.task_list[:-1]):
-                sub_loss = F.mse_loss(y_hat[task_idx], y[task_idx], reduction='mean')
-                losses.append(sub_loss)
-            loss = torch.stack(losses).mean()
-            self.val_losses.append(losses)
-        else:
-            loss = F.mse_loss(y_hat, y, reduction='mean')
-            self.val_losses.append(loss)
+        losses = []
+        for task_idx, _ in enumerate(self.task_list[:-1]):
+            sub_loss = F.mse_loss(y_hat[task_idx], y[task_idx], reduction='mean')
+            losses.append(sub_loss)
+        loss = torch.stack(losses).mean()
+        self.val_losses.append(losses)
+
         return loss
     
     def on_validation_epoch_end(self):
-        if self.multi_task:
-            for task_idx, task in enumerate(self.task_list[:-1]):
-                self.log(f'val_loss/{task}', 
-                         torch.stack([loss[task_idx] for loss in self.val_losses]).mean(), 
-                         on_epoch=True, 
-                         sync_dist=True)
-            average_loss = torch.tensor(self.val_losses).mean()
-            self.log('val_loss', average_loss, on_epoch=True, sync_dist=True)
+        for task_idx, task in enumerate(self.task_list[:-1]):
+            self.log(f'val_loss/{task}', 
+                        torch.stack([loss[task_idx] for loss in self.val_losses]).mean(), 
+                        on_epoch=True, 
+                        sync_dist=True)
+        if self.task is not None:
+            average_loss = torch.stack([loss[self.task_list.index(self.task)] for loss in self.val_losses]).mean()
         else:
-            self.log('val_loss', torch.stack(self.val_losses).mean(), on_epoch=True, sync_dist=True)
+            average_loss = torch.tensor(self.val_losses).mean()
+        self.log('val_loss', average_loss, on_epoch=True, sync_dist=True)
+        self.val_losses.clear()
     
     def on_test_start(self):
         #self.normalizer = Normalizer(self.train_dataloader())
-        root_dir = 'multi_task_result3'
+        root_dir = 'result_size1216'
         self.test_losses = []
         self.testing = True
-
-        if self.multi_task:
-            if self.pretrained:
-                result_dir = f'./{root_dir}/transformer/multi/eval{self.eval_type}_hidden{self.hidden_size}_lr{self.lr}_wd{self.weight_decay}_wr{self.warmup_ratio}_pretrained'
-            else:
-                result_dir = f'./{root_dir}/transformer/multi/eval{self.eval_type}_hidden{self.hidden_size}_lr{self.lr}_wd{self.weight_decay}_wr{self.warmup_ratio}'
-
-            for i in self.task_list[:-1]:
-                if not os.path.exists(f'{result_dir}/{i}'):
-                    os.makedirs(f'{result_dir}/{i}')
-            
-            if self.eval_type == 1:
-                result_dir = f'{result_dir}/{self.task}'
-                self.decoder = self.decoder[self.task_list.index(self.task)]
-
-            elif self.eval_type == 2:
-                num_to_mask = int(self.mask_ratio * self.feature_indices.numel())
-                mask_indices = torch.stack([self.feature_indices[torch.randperm(self.feature_indices.numel())[:num_to_mask]] for _ in range(self.batch_size)], dim=0) # (bz, m)
-                self.certain_mask_indices = mask_indices
-                self.test_losses = [[] for _ in range(len(self.task_list[:-1]))]
-
+        
+        if self.task is not None:
+            result_dir = f'./{root_dir}/mask_transformer/{self.task}/lr{self.lr}_wd{self.weight_decay}_frozen{self.frozen}_warmup{self.warmup_ratio}_feature{self.feature_filling}'
         else:
-            if self.pretrained:
-                result_dir = f'./{root_dir}/transformer/single/hidden{self.hidden_size}_lr{self.lr}_wd{self.weight_decay}_wr{self.warmup_ratio}_pretrained/{self.task}'
-            else:
-                result_dir = f'./{root_dir}/transformer/single/hidden{self.hidden_size}_lr{self.lr}_wd{self.weight_decay}_wr{self.warmup_ratio}/{self.task}'
+            result_dir = f'./{root_dir}/transformer/multi/lr{self.lr}_wd{self.weight_decay}_frozen{self.frozen}_warmup{self.warmup_ratio}_feature{self.feature_filling}'
+        
+        for i in self.task_list[:-1]:
+            if not os.path.exists(f'{result_dir}/{i}'):
+                os.makedirs(f'{result_dir}/{i}')
+        
+        if self.eval_type == 1:
+            result_dir = f'{result_dir}/{self.task}'
+            self.decoder = self.decoder[self.task_list.index(self.task)]
 
-        if not os.path.exists(result_dir):
-            os.makedirs(result_dir)
+        elif self.eval_type == 2:
+            num_to_mask = int(self.mask_ratio * self.feature_indices.numel())
+            mask_indices = torch.stack([self.feature_indices[torch.randperm(self.feature_indices.numel())[:num_to_mask]] for _ in range(self.val_batch_size)], dim=0) # (bz, m)
+            self.certain_mask_indices = mask_indices
+            self.test_losses = [[] for _ in range(len(self.task_list[:-1]))]
 
         self.result_dir = result_dir
 
 
     def test_step(self, batch, batch_idx):
         y, y_hat = self.forward(batch)
-        if self.multi_task and self.eval_type == 2:
+        if self.eval_type == 2:
             for task_idx, task in enumerate(self.task_list[:-1]):
                 current_y = y[task_idx]
                 current_y_hat = y_hat[task_idx]
@@ -409,50 +374,34 @@ class MaskTransformer(LightningModule):
                     if self.trainer.global_rank == 0:
                         file_name = f'{self.result_dir}/{task}/{batch_idx}'
                         visualize(task, self.normalizer, current_y, current_y_hat, file_name)
-        else:
-            loss = F.mse_loss(y_hat, y, reduction='mean')
-            self.test_losses.append(loss)
-
-            if batch_idx >= self.trainer.num_test_batches[0] - 2:
-                if self.trainer.global_rank == 0:
-                    file_name = f'{self.result_dir}/{batch_idx}'
-                    visualize(self.task, self.normalizer, y, y_hat, file_name)
 
 
     def on_test_epoch_end(self):
-        if self.multi_task:
-            if self.eval_type == 1:
-                avg_loss = torch.stack(self.test_losses).mean()
-                loss_name = f'transformer_multi_{self.task}_test_loss'
-                self.log(loss_name, avg_loss) 
-
-            elif self.eval_type == 2:
-                loss_name = f'transformer_test_loss'
-                for task_idx, task in enumerate(self.task_list[:-1]):
-                    avg_loss = torch.stack(self.test_losses[task_idx]).mean()
-                    self.log(f'transformer_multi_{task}_test_loss', avg_loss)
-
-                    fps = 15 if task == 'pose' else 30
-                    for filename in os.listdir(f'{self.result_dir}/{task}'):
-                        if filename.endswith(".mp4"):
-                            self.logger.experiment.log({f'video/{task}': wandb.Video(os.path.join(f'{self.result_dir}/{task}', filename), fps=fps, format="mp4")})
-        else:
+        if self.eval_type == 1:
             avg_loss = torch.stack(self.test_losses).mean()
-            loss_name = f'transformer_single_{self.task}_test_loss'
-            self.log(loss_name, avg_loss)
-            # write the loss to txt file
-            with open(f'{self.result_dir}/{avg_loss.item()}.txt', 'w') as f:
-                f.write(str(avg_loss.item()))
+            loss_name = f'transformer_{self.task}_test_loss'
+            self.log(loss_name, avg_loss) 
+
+        elif self.eval_type == 2:
+            loss_name = f'transformer_test_loss'
+            for task_idx, task in enumerate(self.task_list[:-1]):
+                avg_loss = torch.stack(self.test_losses[task_idx]).mean()
+                self.log(f'transformer_{task}_test_loss', avg_loss)
+
+                fps = 15 if task == 'pose' else 30
+                for filename in os.listdir(f'{self.result_dir}/{task}'):
+                    if filename.endswith(".mp4"):
+                        self.logger.experiment.log({f'video/{task}': wandb.Video(os.path.join(f'{self.result_dir}/{task}', filename), fps=fps, format="mp4")})
         self.test_losses.clear()
         self.testing = False
 
-
+# testing
 def main():
-    model = MaskTransformer(hidden_size=256, 
+    seed_everything(42)
+    model = MaskTransformer(hidden_size=512, 
                             segment=12, 
-                            task='pose', 
-                            frozen=False, 
-                            multi_task=True, 
+                            task=None, 
+                            frozen=True, 
                             mask_ratio=1/3, 
                             eval_type=2, 
                             pretrained=True, 
@@ -462,13 +411,14 @@ def main():
                             warmup_ratio=0.1, 
                             batch_size=16, 
                             alpha=1,
-                            n_layer=6,
-                            n_head=8,
-                            n_inner=256*4,
+                            n_layer=1,
+                            n_head=4,
+                            n_inner=512*4,
                             activation_function='relu',
                             n_ctx=144,
                             resid_pdrop=0.1,
-                            attn_pdrop=0.1)
+                            attn_pdrop=0.1,
+                            n_bundle=12)
     
     wandb_logger = WandbLogger(project="sample")
     

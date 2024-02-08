@@ -11,13 +11,13 @@ parameters:
     model: 
       value: 'transformer'
     hidden_size: 
-      value: 256
+      value: 512
     segment:
       value: 12
     task:
-      value: 'pose'
+      value: None
     frozen:
-      values: [True, False]
+      values: [False, True]
     multi_task:
       value: True
     mask_ratio:
@@ -27,23 +27,23 @@ parameters:
     pretrained:
       value: True
     feature_filling:
-      values: ['repeat', 'pad']
+      value: 'repeat'
 
     lr: 
-      values: [1e-3, 3e-3, 5e-3, 1e-4, 3e-4]
+      values: [0.005, 0.003]
     weight_decay: 
       value: 1e-5
     warmup_ratio:
       values: [0.1, 0.2]
     batch_size:
-      value: 16
+      value: 4
     alpha:
       value: 1
 
     n_layer:
-      value: 6
+      value: 24
     n_head:
-      value: 8
+      value: 16
     activation_function: 
       value: 'relu'
     n_ctx:
@@ -52,6 +52,8 @@ parameters:
       value: 0.1
     attn_pdrop:
       value: 0.1
+    n_bundle:
+      value: 12
 
     epoch:
       value: 20

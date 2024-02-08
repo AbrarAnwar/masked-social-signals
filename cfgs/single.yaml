@@ -4,30 +4,36 @@ metric:
   goal: 'minimize'   
 
 parameters:
+  seed:
+    value: 42
   model:
     value: 'transformer'
+  task:
+    value: 'gaze'
   hidden_size:
-    value: 256
+    value: 128
   segment:
     value: 12
-  mask_strategy:
+  eval_type:
     value: 2
+  pretrained:
+    value: True
   frozen:
     values: [True, False]
   lr:
-    values: [0.001, 0.003]
+    values: [0.001, 0.003, 0.005, 0.0005]
   weight_decay:
-    value: 1e-5
-  warmup_steps:
-    value: 1000
+    values: [1e-4, 1e-5]
+  warmup_ratio:
+    values: [0.1, 0.2]
   batch_size:
-    value: 16
+    value: 4
   alpha:
-    values: [1.0, 0.5, 0.3]
+    values: [1.0, 0.5, 0]
   n_layer:
     value: 6
   n_head:
-    values: [4,8]
+    value: 8
   activation_function:
     value: 'relu'
   n_ctx:
@@ -36,5 +42,7 @@ parameters:
     value: 0.1
   attn_pdrop:
     value: 0.1
+  n_bundle:
+    value: 3
   epoch:
     value: 20

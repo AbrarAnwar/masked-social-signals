@@ -124,16 +124,8 @@ class Attention(nn.Module):
         n_state = nx  # in Attention: n_state=768 (nx=n_embd)
         # [switch nx => n_state from Block to Attention to keep identical to TF implem]
         assert n_state % config.n_head == 0
-
-        # DIY causal mask
-        # assert n_ctx % 3 == 0
-        # diy_causal_mask = torch.tril(torch.ones((n_ctx, n_ctx), dtype=torch.uint8), diagonal=-1)#.view(1, 1, n_ctx, n_ctx)
-        # filter_section = torch.ones((3, 3), dtype=torch.uint8) - torch.eye(3, dtype=torch.uint8)
-        # for i in range(0, n_ctx, 3):
-        #     diy_causal_mask[i:i+3, i:i+3] = filter_section
-        # diy_causal_mask = diy_causal_mask.view(1, 1, n_ctx, n_ctx) 
         
-        bundle = 12
+        bundle = config.n_bundle
         assert n_ctx % bundle == 0
         diy_causal_mask = torch.tril(torch.ones((n_ctx, n_ctx), dtype=torch.uint8), diagonal=-1)#.view(1, 1, n_ctx, n_ctx)
         filter_section = torch.ones((bundle, bundle), dtype=torch.uint8) - torch.eye(bundle, dtype=torch.uint8)
