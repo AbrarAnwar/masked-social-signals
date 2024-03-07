@@ -5,13 +5,24 @@ import lightning.pytorch as pl
 import wandb
 import yaml
 from lightning.pytorch.callbacks import ModelCheckpoint
+import argparse
+
+
+def get_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--feature_mask", type=str, default='multi')
+
+    return parser.parse_args()
+
 
 def main():
+    args = get_args()
     wandb_logger = WandbLogger(project="masked-social-signals")
     hparams = wandb.config
 
     seed_everything(hparams.seed)
-    torch.cuda.empty_cache()
+
     
     if hparams.model == 'lstm':
         model = LSTMModel(hidden_size=hparams.hidden_size,
@@ -32,10 +43,7 @@ def main():
     elif hparams.model == 'transformer':
         model = MaskTransformer(hidden_size=hparams.hidden_size,
                                 segment=hparams.segment,
-                                task=eval(hparams.task),
                                 frozen=hparams.frozen,
-                                mask_ratio=hparams.mask_ratio,
-                                eval_type=hparams.eval_type,
                                 pretrained=hparams.pretrained,
                                 feature_filling=hparams.feature_filling,
                                 lr=hparams.lr,
@@ -43,6 +51,8 @@ def main():
                                 warmup_ratio=hparams.warmup_ratio,
                                 batch_size=hparams.batch_size,
                                 alpha=hparams.alpha,
+                                result_root_dir=hparams.result_root_dir,
+                                feature_mask=args.feature_mask,
                                 n_layer=hparams.n_layer,
                                 n_head=hparams.n_head,
                                 n_inner=hparams.hidden_size*4,
@@ -52,8 +62,8 @@ def main():
                                 attn_pdrop=hparams.attn_pdrop,
                                 n_bundle=hparams.n_bundle)
         model_class = MaskTransformer
-        checkpoint_path = f'./ckpt1216/{hparams.model}/{hparams.task}/lr{hparams.lr}_wd{hparams.weight_decay}_frozen{hparams.frozen}_warmup{hparams.warmup_ratio}_feature{hparams.feature_filling}'
-        name = f'{hparams.model}1216_lr{hparams.lr}_wd{hparams.weight_decay}_frozen{hparams.frozen}_warmup{hparams.warmup_ratio}_feature{hparams.feature_filling}'
+        checkpoint_path = f'./{hparams.ckpt}/{hparams.model}/{args.feature_mask}/lr{hparams.lr}_wd{hparams.weight_decay}_frozen{hparams.frozen}_warmup{hparams.warmup_ratio}_feature{hparams.feature_filling}'
+        name = f'{args.feature_mask}_lr{hparams.lr}_wd{hparams.weight_decay}_frozen{hparams.frozen}_warmup{hparams.warmup_ratio}_feature{hparams.feature_filling}'
     else:
         raise NotImplementedError()
  
@@ -74,6 +84,7 @@ def main():
                          max_epochs=hparams.epoch, 
                          logger=wandb_logger,
                          num_sanity_val_steps=0,
+                         devices=hparams.device_count,
                          strategy=DDPStrategy(find_unused_parameters=True))
     trainer.fit(model)
     

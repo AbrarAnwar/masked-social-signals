@@ -1,0 +1,8 @@
+*__pycache__*
+3632/
+ckpt*
+pretrained_best/
+result*
+sample*
+wandb/
+lightning_logs/

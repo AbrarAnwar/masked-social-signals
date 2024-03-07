@@ -14,23 +14,19 @@ parameters:
       value: 512
     segment:
       value: 12
-    task:
-      value: None
     frozen:
       values: [False, True]
-    multi_task:
-      value: True
-    mask_ratio:
-      value: 0.3333333
-    eval_type:
-      value: 2
+    
     pretrained:
       value: True
     feature_filling:
-      value: 'repeat'
+      values: ['repeat', 'pad']
+
+    feature_mask:
+      value: [1,1,1,1,1,1]
 
     lr: 
-      values: [0.005, 0.003]
+      values: [0.005, 0.006]
     weight_decay: 
       value: 1e-5
     warmup_ratio:
@@ -40,20 +36,29 @@ parameters:
     alpha:
       value: 1
 
+    result_root_dir:
+      value: 'sample'
+
     n_layer:
-      value: 24
+      value: 48
     n_head:
-      value: 16
+      value: 32
     activation_function: 
       value: 'relu'
     n_ctx:
-      value: 144
+      value: 216
     resid_pdrop:
       value: 0.1
     attn_pdrop:
       value: 0.1
     n_bundle:
-      value: 12
+      value: 18
+
+    device_count:
+      value: 4
+
+    ckpt:
+      value: 'sample'
 
     epoch:
-      value: 20
+      value: 1

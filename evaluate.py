@@ -32,55 +32,82 @@ def pretty_print(PCK, FID, W1):
 
 
 def evaluate(model_path, single=False):
-    tasks = ['headpose','gaze','pose']
+    tasks = ['headpose','gaze','pose', 'speaker','bite']
 
     model = MaskTransformer.load_from_checkpoint(model_path)
     device = model.device
     model = model.to(device)
-    model.on_train_start()
-    model.on_test_start()
+    pck = PCK()
+    fids = {task:FID() for task in tasks}
+    w1s = {task:W1() for task in tasks}
+
+    speaker_total = 0
+    bite_total = 0
+    speaker_1s = 0
+    bite_1s = 0
+
+    train_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18_v3', 30, training=True)
+    split = int(0.8 * len(train_dataset))
+    train_indices = list(range(split))
+    val_indices = list(range(split, len(train_dataset)))
+    val_dataset = Subset(train_dataset, val_indices)
+
+    test_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18_v3', 30, training=False)
+
+    train_dataloader = DataLoader(train_dataset, batch_size=4, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
+    val_dataloader = DataLoader(val_dataset, batch_size=4, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
+    test_dataloader = DataLoader(test_dataset, batch_size=4, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
+    
     model.eval()
     with torch.no_grad():
-        pck = PCK()
-        fids = {task:FID() for task in tasks}
-        w1s = {task:W1() for task in tasks}
+        # for batch in tqdm(val_dataloader):
+        #     batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+        #     ys, preds = model.forward(batch)
 
-        train_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18_v2', 30, training=True)
-        split = int(0.8 * len(train_dataset))
-        train_indices = list(range(split))
-        val_indices = list(range(split, len(train_dataset)))
-        val_dataset = Subset(train_dataset, val_indices)
-
-        val_dataloader = DataLoader(val_dataset, batch_size=4, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
-
-        for batch in tqdm(val_dataloader):
-            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-            ys, preds = model.forward(batch)
-
-            for task_idx, task in enumerate(tasks):
-                y = ys if single else ys[task_idx]
-                pred = preds if single else preds[task_idx]
+        #     for task_idx, task in enumerate(tasks[:-2]):
+        #         y = ys if single else ys[task_idx]
+        #         pred = preds if single else preds[task_idx]
                 
-                # undo normalization
-                y_undo = model.normalizer.minmax_denormalize(y, task)
-                pred_undo = model.normalizer.minmax_denormalize(pred, task)
+        #         # undo normalization
+        #         y_undo = model.normalizer.minmax_denormalize(y, task)
+        #         pred_undo = model.normalizer.minmax_denormalize(pred, task)
 
-                if task == 'pose':
-                    pck(y_undo, pred_undo)
-                    fids[task](y, pred)
-                else:
-                    fids[task](y_undo, pred_undo)
+        #         if task == 'pose':
+        #             pck(y_undo, pred_undo)
+        #             fids[task](y, pred)
+        #         else:
+        #             fids[task](y_undo, pred_undo)
 
-                w1s[task](y_undo, pred_undo)
+        #         w1s[task](y_undo, pred_undo)
+        segment = 12
+        for batch in tqdm(train_dataloader):
+            speaker = batch['speaker']
+            bite = batch['bite']
+            bz = speaker.size(0)
+
+            # count 1s and 0s in speaker and bite
+            speaker_reshaped = speaker.reshape(bz, 3, segment, -1) # (bz, 3, 6, 180)
+            speaker_sum = speaker_reshaped.sum(dim=-1) # (bz, 3, 180)
+            speaker_tranformed = (speaker_sum > 0.3 * 90).float().unsqueeze(-1)
+
+            bite_reshaped = bite.reshape(bz, 3, segment, -1) # (bz*3, 6, 180)
+            bite_sum = bite_reshaped.sum(dim=-1) # (bz, 3, 180)
+            bite_tranformed = (bite_sum >= 1).float().unsqueeze(-1)
+
+            speaker_1s += speaker_tranformed.sum()
+            bite_1s += bite_tranformed.sum()
+
+            # count total
+            speaker_total += speaker_tranformed.numel()
+            bite_total += bite_tranformed.numel()
 
     pretty_print(pck, fids, w1s)
+    print(f"Speaker: {speaker_1s/speaker_total:.4f}")
+    print(f"Bite: {bite_1s/bite_total:.4f}")
+    print(f'Speaker_1s: {speaker_1s}')
+    print(f'Bite_1s: {bite_1s}')
             
 
 if __name__ == '__main__':
-    #model = MaskTransformer.load_from_checkpoint('/home/tangyimi/masked_mine/ckpt/transformer/lr0.005_wd1e-05_frozenFalse_warmup0.1_featurerepeat/best.ckpt')
-    #pose_model = SingleTransformer.load_from_checkpoint('/home/tangyimi/masked_mine/ckpt/pose_transformer/lr0.005_wd0.0001_frozenFalse_warmup0.2_alpha0/best.ckpt')
-    #gaze_model = SingleTransformer.load_from_checkpoint('/home/tangyimi/masked_mine/ckpt/gaze_transformer/lr0.005_wd1e-05_frozenFalse_warmup0.1_alpha0/best.ckpt')
-    #model = MaskTransformer.load_from_checkpoint('/home/tangyimi/masked_mine/ckpt/transformer/lr0.005_wd1e-05_frozenFalse_warmup0.1_featurerepeat/best.ckpt')
-    #pose_mask_model = MaskTransformer.load_from_checkpoint('/home/tangyimi/masked_mine/ckpt/transformer/pose/lr0.005_wd1e-05_frozenFalse_warmup0.1_featurerepeat/best.ckpt')
     args = get_args()
     evaluate(args.model_path, single=args.single)

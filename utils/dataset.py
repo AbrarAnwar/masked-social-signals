@@ -55,7 +55,7 @@ class MultiDataset(Dataset):
             bite.append(torch.tensor(data_loaded[f'person_{i}_bite'], dtype=torch.float32))
         
         segment['word'] = word
-        segment['status_speaker'] = torch.stack(status_speaker)
+        segment['speaker'] = torch.stack(status_speaker)
         segment['whisper_speaker'] = torch.stack(whisper_speaker)
         segment['headpose'] = torch.stack(headpose)
         segment['gaze'] = torch.stack(gaze)
@@ -64,16 +64,6 @@ class MultiDataset(Dataset):
         
         return segment
 
-'''
-if __name__ == '__main__':
-    data_path = '/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18_v3'
-    dataset = MultiDataset(data_path, 30, training=True)
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=custom_collate_fn)
-
-    for batch in dataloader:
-        print(batch['bite'])
-        break
-'''
             
 
 

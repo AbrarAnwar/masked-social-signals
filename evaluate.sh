@@ -1,1 +1,1 @@
-srun --gres=gpu:a6000:1 --time 4200 --nodelist glamor-ruby python -m evaluate --model_path '/home/tangyimi/masked_mine/ckpt1216/transformer/None/lr0.005_wd1e-05_frozenFalse_warmup0.2_featurerepeat/best.ckpt'
+srun --gres=gpu:a6000:1 --time 4200 --nodelist glamor-ruby python -m evaluate --model_path '/home/tangyimi/masked_mine/ckpt3632/transformer/None/lr0.006_wd1e-05_frozenFalse_warmup0.2_featurerepeat/best.ckpt'

@@ -1,8 +1,10 @@
 import numpy as np
 
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, logging
 from lightning import LightningModule
 import torch
+
+logging.set_verbosity_warning()
 
 class BERTProcessor(LightningModule):
 
@@ -12,7 +14,6 @@ class BERTProcessor(LightningModule):
         self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased", use_fast=False)
         self.model = AutoModel.from_pretrained("bert-base-uncased")
         self.requires_grad=False
-        #self.model = torch.nn.DataParallel(self.model)
 
 
     def get_embeddings(self, batch_word):
