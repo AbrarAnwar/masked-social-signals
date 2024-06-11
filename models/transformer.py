@@ -1,29 +1,22 @@
-import numpy as np
+import sys, os
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Subset
-from torch.optim.lr_scheduler import LambdaLR
-import os
-
 from lightning import LightningModule
-from lightning.pytorch.strategies import DDPStrategy
 import lightning.pytorch as pl
 import transformers
 from lightning.pytorch.loggers import WandbLogger
-
 from torchmetrics import Accuracy, Precision, Recall, F1Score
+from lightning import seed_everything
 
-from models.autoencoder import *
+from models.autoencoder import Encoder, Decoder
 from models.gpt2 import GPT2Model
-from utils.dataset import *
-from utils.visualize import *
-from utils.embeddings import *
-from utils.normalize import *
-from utils.utils import *
+from utils.visualize import visualize
+from utils.utils import freeze
 import wandb
 
-from lightning import seed_everything
 
 
 class MaskTransformer(LightningModule):
@@ -43,6 +36,7 @@ class MaskTransformer(LightningModule):
 
     def __init__(
             self,
+            experiment_name,
             hidden_size,
             segment,
             frozen,
@@ -50,16 +44,17 @@ class MaskTransformer(LightningModule):
             feature_filling,
             lr,
             weight_decay,
-            warmup_ratio,
-            batch_size,
-            alpha,
+            alpha, 
             result_root_dir,
+            normalizer,
             feature_mask=[1,1,1,1,1,1],
             **kwargs
     ):
         super().__init__()
         self.save_hyperparameters()
+        self.normalizer = normalizer
 
+        self.experiment_name = experiment_name
         self.hidden_size = hidden_size
         self.small_hidden_size = 128 # for headpose and gaze, depends on pretrained autoencoders
         self.frozen = frozen
@@ -69,7 +64,6 @@ class MaskTransformer(LightningModule):
         self.pretrained = pretrained
         self.feature_filling = feature_filling
 
-        self.processors = BERTProcessor()
         self.embed_timestep = nn.Embedding(self.segment, self.hidden_size)
 
         self.embed_speaker = nn.Embedding(2, self.hidden_size)
@@ -93,8 +87,8 @@ class MaskTransformer(LightningModule):
 
         if self.pretrained:
             for task_idx, task in enumerate(self.task_list[:-3]):
-                self.encoder[task_idx].load_state_dict(torch.load(f"/home/tangyimi/masked_mine/pretrained_best/{task}/encoder.pth"))
-                self.decoder[task_idx].load_state_dict(torch.load(f"/home/tangyimi/masked_mine/pretrained_best/{task}/decoder.pth"))
+                self.encoder[task_idx].load_state_dict(torch.load(f"/home/tangyimi/masked-social-signals/pretrained_best/{task}/encoder.pth"))
+                self.decoder[task_idx].load_state_dict(torch.load(f"/home/tangyimi/masked-social-signals/pretrained_best/{task}/decoder.pth"))
             
             if self.frozen:
                 for encoder, decoder in zip(self.encoder, self.decoder):
@@ -111,61 +105,24 @@ class MaskTransformer(LightningModule):
 
         self.lr = lr
         self.weight_decay = weight_decay
-        self.warmup_ratio = warmup_ratio 
         self.alpha = alpha
-
-        # load data
-        self.batch_size = batch_size
-        self.val_batch_size = 8
-
-        train_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18_v3', 30, training=True)
-        #train_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window9_stride5_v2', 30, training=True)
-
-        split = int(0.8 * len(train_dataset))
-        train_indices = list(range(split))
-        val_indices = list(range(split, len(train_dataset)))
-
-        self.train_dataset = Subset(train_dataset, train_indices)
-        self.val_dataset = Subset(train_dataset, val_indices)
-        self.test_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18_v3', 30, training=False)
         
-        self.normalizer = Normalizer(self.train_dataloader())
-
         self.root_dir = result_root_dir
-        
+    
 
-    def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
-    
-    def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.val_batch_size, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
-    
-    def test_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.val_batch_size, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
-    
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        lr_lambda = lambda epoch: self.lr_schedule(self.global_step)
-        scheduler = LambdaLR(optimizer, lr_lambda)
+        optimizer = torch.optim.Adam(self.parameters(), 
+                                     lr=self.lr, 
+                                     weight_decay=self.weight_decay)
 
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer,
+                                                                            T_0=5,
+                                                                            T_mult=2, 
+                                                                            eta_min=1e-6)
         return [optimizer], [scheduler]
-
-    def lr_schedule(self, current_step):
-        total_steps = self.trainer.num_training_batches * self.trainer.max_epochs
-        warmup_steps = self.warmup_ratio * total_steps
-        if current_step < warmup_steps:
-            lr_mult = float(current_step) / float(max(1, warmup_steps))
-        else:
-            progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-            lr_mult = max(0.1, 0.5 * (1.0 + math.cos(math.pi * progress)))
-
-        return self.lr * lr_mult
-
+    
 
     def forward_multi_task(self, batch):
-        batch['word'] = self.processors.get_embeddings(batch['word'])
-        batch['pose'] = smoothing(batch['pose'], self.batch_length).to(self.device)
-
         bz = batch['gaze'].size(0)
 
         encode_list = []
@@ -178,10 +135,7 @@ class MaskTransformer(LightningModule):
         
         for task_idx, task in enumerate(self.task_list[:-2]):
             current = batch[task]
-            if task == 'pose':
-                segment_length = self.segment_length // 2
-            else:
-                segment_length = self.segment_length
+            segment_length = current.size(2) // self.segment
 
             current = current.reshape(bz, 3, self.segment, segment_length, current.size(-1)) # (bz, 3, 6, 180, feature_dim)
 
@@ -245,11 +199,10 @@ class MaskTransformer(LightningModule):
         for task_idx, task in enumerate(self.task_list[:-3]):
             
             task_output = output[:, task_idx::len(self.task_list), :]
-            if task == 'pose':
-                segment_length = self.segment_length // 2   
-            else:
+            if task != 'pose':
                 task_output = task_output[:, :, :self.small_hidden_size]
-                segment_length = self.segment_length
+                
+            segment_length = self.segment_length if task != 'pose' else self.segment_length // 2
 
             task_output_reshaped = task_output.reshape(bz*3*self.segment, -1)
 
@@ -279,7 +232,7 @@ class MaskTransformer(LightningModule):
 
         return self.forward_multi_task(batch)
 
-    def _shared_step(self, batch, name):
+    def step(self, batch, name):
         y, y_hat = self.forward(batch)
         losses = []
 
@@ -292,8 +245,16 @@ class MaskTransformer(LightningModule):
                 y_hat_vel = current_y_hat[:, :, 1:, :] - current_y_hat[:, :, :-1, :]
                 velocity = F.mse_loss(y_vel, y_hat_vel, reduction='mean')
 
-                task_loss = reconstruct_loss + self.alpha * velocity
-                
+                # segment loss 
+                segment_length = current_y.size(2) // self.segment
+
+                y_segment_delta = current_y[:, :, segment_length-1:-1:segment_length, :] - current_y[:, :, segment_length::segment_length, :]
+                y_hat_segment_delta = current_y_hat[:, :, segment_length-1:-1:segment_length, :] - current_y_hat[:, :, segment_length::segment_length, :]
+                segment_loss = F.mse_loss(y_segment_delta, y_hat_segment_delta, reduction='mean')
+
+                # TODO: add alpha segment loss
+                task_loss = reconstruct_loss + velocity + self.alpha * segment_loss
+
                 self.log(f'{name}/{task}', task_loss, on_epoch=True, sync_dist=True)
 
                 losses.append(task_loss)
@@ -310,20 +271,20 @@ class MaskTransformer(LightningModule):
         return loss
     
     def training_step(self, batch, batch_idx):
-        return self._shared_step(batch, 'train_loss')
+        return self.step(batch, 'train_loss')
 
     def validation_step(self, batch, batch_idx):
-        return self._shared_step(batch, 'val_loss')
+        return self.step(batch, 'val_loss')
 
-    def on_test_start(self):   
-        result_dir = f'./{self.root_dir}/transformer/{self.feature_mask}/lr{self.lr}_wd{self.weight_decay}_frozen{self.frozen}_warmup{self.warmup_ratio}_feature{self.feature_filling}'
+    def on_test_start(self):
+        result_dir = f"./{self.root_dir}/{self.feature_mask}/{self.experiment_name}"
         
         for i in self.task_list[:-3]:
-            if not os.path.exists(f'{result_dir}/{i}'):
-                os.makedirs(f'{result_dir}/{i}')
+            os.makedirs(f'{result_dir}/{i}', exist_ok=True)
         
         self.result_dir = result_dir
 
+        self.visualize_idx = torch.randint(low=0, high=self.trainer.num_test_batches[0], size=(1,)).item()
         self.classification_metrics = {'speaker': 
                                     {'accuracy': Accuracy(task="binary").to(self.device), 
                                     'precision': Precision(task="binary", average='weighted').to(self.device), 
@@ -334,7 +295,8 @@ class MaskTransformer(LightningModule):
                                     'precision': Precision(task="binary", average='weighted').to(self.device), 
                                     'recall': Recall(task="binary", average='weighted').to(self.device), 
                                     'f1': F1Score(task="binary", average='weighted').to(self.device)}}
-
+        
+        
     def test_step(self, batch, batch_idx):
         y, y_hat = self.forward(batch)
         for task_idx, task in enumerate(self.task_list[:-3]):
@@ -342,12 +304,13 @@ class MaskTransformer(LightningModule):
                 current_y = y[task_idx]
                 current_y_hat = y_hat[task_idx]
                 current_loss = F.mse_loss(current_y_hat, current_y, reduction='mean')
+                
                 self.log(f'test_loss/{task}', current_loss, on_epoch=True, sync_dist=True)
-
-                if batch_idx >= self.trainer.num_test_batches[0] - 2:
-                    if self.trainer.global_rank == 0:
-                        file_name = f'{self.result_dir}/{task}/{batch_idx}'
-                        visualize(task, self.normalizer, current_y, current_y_hat, file_name)
+                
+                #visualize one batch
+                if batch_idx == self.visualize_idx:
+                    file_name = f'{self.result_dir}/{task}/{batch_idx}'
+                    visualize(task, self.normalizer, current_y, current_y_hat, file_name)
         
         for task_idx, task in enumerate(self.task_list[-2:]):
             if self.feature_mask_exclude_word[task_idx - 2]:
@@ -360,30 +323,28 @@ class MaskTransformer(LightningModule):
             if self.feature_mask_exclude_word[task_idx]:
                 fps = 15 if task == 'pose' else 30
                 for filename in os.listdir(f'{self.result_dir}/{task}'):
-                    if filename.endswith(".mp4"):
-                        self.logger.experiment.log({f'video/{task}': wandb.Video(os.path.join(f'{self.result_dir}/{task}', filename), fps=fps, format="mp4")})
-        
+                    self.logger.experiment.log({f'video/{task}': wandb.Video(os.path.join(f'{self.result_dir}/{task}', filename), 
+                                                                                fps=fps, 
+                                                                                format="mp4")})
         for task_idx, task in enumerate(self.task_list[-2:]):
             if self.feature_mask_exclude_word[task_idx - 2]:
                 for metric_name, metric in self.classification_metrics[task].items():
-                    self.log(f'test/{task}/{metric_name}', metric.compute(), on_epoch=True, sync_dist=True)
+                    self.log(f'test/{task}/{metric_name}', metric.compute(), sync_dist=True)
 
 # testing
 def main():
     seed_everything(42)
-    model = MaskTransformer(hidden_size=512, 
+    model = MaskTransformer(experiment_name='test',
+                            hidden_size=512, 
                             segment=12, 
                             task=None, 
                             frozen=False, 
                             pretrained=True, 
                             feature_filling='repeat', 
                             lr=3e-4, 
-                            weight_decay=1e-5, 
-                            warmup_ratio=0.1, 
-                            batch_size=4, 
-                            alpha=1,
-                            result_root_dir='sample_result2',
-                            feature_mask='mask_word',
+                            weight_decay=1e-5,
+                            result_root_dir='results/sample',
+                            feature_mask='multi',
                             n_layer=1,
                             n_head=4,
                             n_inner=512*4,
@@ -393,9 +354,14 @@ def main():
                             attn_pdrop=0.1,
                             n_bundle=18)
     
-    wandb_logger = WandbLogger(project="sample")
+    wandb_logger = WandbLogger(entity='tangyiming', project="sample")
     
-    trainer = pl.Trainer(max_epochs=1, strategy=DDPStrategy(find_unused_parameters=True), logger=wandb_logger, num_sanity_val_steps=0,)
+    trainer = pl.Trainer(accelerator='gpu',
+                        devices=2,
+                        max_epochs=1, 
+                        strategy='ddp_find_unused_parameters_true', 
+                        logger=wandb_logger, 
+                        num_sanity_val_steps=0,)
     trainer.fit(model)
     trainer.test(model)
 

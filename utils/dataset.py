@@ -1,15 +1,8 @@
+import utils
 import torch
-from torch.utils.data import Dataset, DataLoader
-from torch.utils.data._utils.collate import default_collate
+from torch.utils.data import Dataset, DataLoader, Subset
 from pathlib import Path
 import numpy as np
-
-
-def custom_collate_fn(batch):
-    word = [item['word'] for item in batch]
-    batch = default_collate(batch)
-    batch['word'] = word 
-    return batch
 
 
 class MultiDataset(Dataset):
@@ -42,11 +35,10 @@ class MultiDataset(Dataset):
     def __getitem__(self,idx):
         file = self.files[idx]
         data_loaded = np.load(file)
-        segment = dict()
         word, status_speaker, whisper_speaker, headpose, gaze, pose, bite = [], [], [], [], [], [], []
         
         for i in range(3):
-            word.append(data_loaded[f'person_{i}_word'].tolist())
+            word.append(torch.tensor(data_loaded[f'person_{i}_word'], dtype=torch.float32))
             status_speaker.append(torch.tensor(data_loaded[f'person_{i}_status_speaker'], dtype=torch.float32))
             whisper_speaker.append(torch.tensor(data_loaded[f'person_{i}_whisper_speaker'], dtype=torch.float32))
             headpose.append(torch.tensor(data_loaded[f'person_{i}_headpose'], dtype=torch.float32))
@@ -54,17 +46,48 @@ class MultiDataset(Dataset):
             pose.append(torch.tensor(data_loaded[f'person_{i}_pose'], dtype=torch.float32))
             bite.append(torch.tensor(data_loaded[f'person_{i}_bite'], dtype=torch.float32))
         
-        segment['word'] = word
-        segment['speaker'] = torch.stack(status_speaker)
-        segment['whisper_speaker'] = torch.stack(whisper_speaker)
-        segment['headpose'] = torch.stack(headpose)
-        segment['gaze'] = torch.stack(gaze)
-        segment['pose'] = torch.stack(pose)
-        segment['bite'] = torch.stack(bite)
         
-        return segment
+        return {'word': torch.stack(word), 
+                'speaker': torch.stack(status_speaker), 
+                'whisper_speaker': torch.stack(whisper_speaker), 
+                'headpose': torch.stack(headpose), 
+                'gaze': torch.stack(gaze), 
+                'pose': torch.stack(pose), 
+                'bite': torch.stack(bite)}
 
             
+def get_loaders(batch_path, validation_idx, batch_size, num_workers):
+    complete_train_dataset = MultiDataset(batch_path, validation_idx, training=True)
+
+    split = int(0.9 * len(complete_train_dataset)) # 8/2 9/1
+    train_indices = list(range(split))
+    val_indices = list(range(split, len(complete_train_dataset)))
+
+    train_dataset = Subset(complete_train_dataset, train_indices)
+    val_dataset = Subset(complete_train_dataset, val_indices)
+    test_dataset = MultiDataset(batch_path, validation_idx, training=False)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False, num_workers=num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False, num_workers=num_workers)
+
+    return train_loader, val_loader, test_loader
+
+
+# testing
+
+if __name__ == '__main__':
+    batch_path = '/home/tangyimi/masked-social-signals/dining_dataset/batch_window36_stride18_v4'
+    validation_idx = 30
+    batch_size = 8
+    num_workers = 2
+
+    train_loader, val_loader, test_loader = get_loaders(batch_path, validation_idx, batch_size, num_workers)
+
+    for batch_idx, batch in enumerate(val_loader):
+        print(f'batch_idx: {batch_idx}')
+        
+        
 
 
 

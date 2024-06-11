@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader, Subset
 from torch.optim.lr_scheduler import LambdaLR
 from lightning import LightningModule
 
-from utils.dataset import *
+from utils.dataset import get_loaders
 from utils.visualize import *
 from utils.embeddings import *
 from utils.normalize import *

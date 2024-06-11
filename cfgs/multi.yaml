@@ -1,5 +1,5 @@
 method: 'grid'
-
+name: 'multi'
 metric: 
     name: 'val_loss'
     goal: 'minimize'   
@@ -8,8 +8,6 @@ parameters:
     seed:
       value: 42
 
-    model: 
-      value: 'transformer'
     hidden_size: 
       value: 512
     segment:
@@ -20,29 +18,22 @@ parameters:
     pretrained:
       value: True
     feature_filling:
-      values: ['repeat', 'pad']
-
-    feature_mask:
-      value: [1,1,1,1,1,1]
+      value: 'repeat'
 
     lr: 
-      values: [0.005, 0.006]
+      values: [3e-4, 5e-4]
     weight_decay: 
-      value: 1e-5
-    warmup_ratio:
-      values: [0.1, 0.2]
-    batch_size:
-      value: 4
+      value: 1e-6
     alpha:
-      value: 1
+      values: [0, 0.25, 0.5, 0.75, 1]
+    batch_size:
+      value: 32
 
-    result_root_dir:
-      value: 'sample'
-
+    
     n_layer:
       value: 48
     n_head:
-      value: 32
+      value: 16
     activation_function: 
       value: 'relu'
     n_ctx:
@@ -54,11 +45,12 @@ parameters:
     n_bundle:
       value: 18
 
-    device_count:
-      value: 4
-
-    ckpt:
-      value: 'sample'
-
     epoch:
-      value: 1
+      value: 100
+
+    result_root_dir:
+      value: 'results/transformer9'
+    ckpt:
+      value: 'checkpoints/transformer9'
+
+    

@@ -1,18 +1,15 @@
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from torch.optim.lr_scheduler import LambdaLR
 import os
-import random
 
 from lightning import LightningModule
 from lightning.pytorch.strategies import DDPStrategy
 import lightning.pytorch as pl
 import transformers
 from lightning.pytorch.loggers import WandbLogger
-from moviepy.editor import VideoFileClip
 import wandb
 
 from models.autoencoder import *
@@ -22,7 +19,6 @@ from utils.visualize import *
 from utils.embeddings import *
 from utils.normalize import *
 from utils.utils import *
-import utils
 
 
 # (Return_1, state_1, action_1, Return_2, state_2, ...)

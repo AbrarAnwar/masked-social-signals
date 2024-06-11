@@ -1,3 +1,9 @@
+import sys
+import os
+
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(parent_dir)
+
 import lightning.pytorch as pl
 from lightning.pytorch.strategies import DDPStrategy
 from torch.optim.lr_scheduler import LambdaLR
@@ -18,6 +24,8 @@ from lightning import LightningModule
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 import yaml
+
+import argparse
 
 class Encoder(nn.Module):
     def __init__(self, input_dim, hidden_sizes, activation=True):
@@ -61,7 +69,7 @@ class Decoder(nn.Module):
 class AutoEncoder(LightningModule):
     FEATURES = {'headpose':2, 'gaze':2, 'pose':26}
 
-    def __init__(self, task, segment, hidden_sizes, alpha, lr, weight_decay, batch_size):
+    def __init__(self, task, segment, hidden_sizes, result_root_dir, pretrained_dir, alpha, lr, weight_decay, batch_size):
         super().__init__()
         self.save_hyperparameters()
         self.task = task
@@ -80,9 +88,12 @@ class AutoEncoder(LightningModule):
         self.weight_decay = weight_decay
         #self.warmup_ratio = warmup_ratio
 
+        self.result_root_dir = result_root_dir
+        self.pretrained_dir = pretrained_dir
+
         self.batch_size = batch_size
         #dataset = MultiDataset('/data/tangyimi/batch_window36_stride18') 
-        train_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18_v2', 30, training=True)
+        train_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18_v3', 30, training=True)
 
         split = int(0.8 * len(train_dataset))
         train_indices = list(range(split))
@@ -90,7 +101,7 @@ class AutoEncoder(LightningModule):
 
         self.train_dataset = Subset(train_dataset, train_indices)
         self.val_dataset = Subset(train_dataset, val_indices)
-        self.test_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18_v2', 30, training=False)
+        self.test_dataset = MultiDataset('/home/tangyimi/social_signal/dining_dataset/batch_window36_stride18_v3', 30, training=False)
         
         self.normalizer = Normalizer(self.train_dataloader())
 
@@ -104,27 +115,18 @@ class AutoEncoder(LightningModule):
         return DataLoader(self.val_dataset, batch_size=8, shuffle=True, collate_fn=custom_collate_fn)
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)  
-    
+        optimizer = torch.optim.Adam(self.parameters(), 
+                                     lr=self.lr, 
+                                     weight_decay=self.weight_decay)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 
+                                                               T_max=self.trainer.max_epochs) 
+        return [optimizer], [scheduler]
+        
     '''
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        lr_lambda = lambda epoch: self.lr_schedule(self.global_step)
-        scheduler = LambdaLR(optimizer, lr_lambda)
 
-        return [optimizer], [scheduler]
-
-    def lr_schedule(self, current_step):
-        total_steps = self.trainer.num_training_batches * self.trainer.max_epochs
-        warmup_steps = self.warmup_ratio * total_steps
-        if current_step < warmup_steps:
-            lr_mult = float(current_step) / float(max(1, warmup_steps))
-        else:
-            progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-            lr_mult = max(0.1, 0.5 * (1.0 + math.cos(math.pi * progress)))
-
-        return self.lr * lr_mult
-    '''
+        return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay) 
+    '''   
     
     def on_train_start(self):
         self.train_losses = []
@@ -181,13 +183,13 @@ class AutoEncoder(LightningModule):
     def on_test_start(self):
         self.test_losses = []
 
-        result_dir = f'./result_autoencoder4/{self.task}/hidden{self.hidden_size}_lr{self.lr}_wd{self.weight_decay}_alpha{self.alpha}'
-        model_dir = f'./pretrained4/{self.task}/hidden{self.hidden_size}_lr{self.lr}_wd{self.weight_decay}_alpha{self.alpha}'
+        result_dir = f'./{self.result_root_dir}/{self.task}/hidden{self.hidden_size}_lr{self.lr}_wd{self.weight_decay}_alpha{self.alpha}'
+        model_dir = f'./{self.pretrained_dir}/{self.task}/hidden{self.hidden_size}_lr{self.lr}_wd{self.weight_decay}_alpha{self.alpha}'
         if not os.path.exists(result_dir):
-            os.makedirs(result_dir)
+            os.makedirs(result_dir, exist_ok=True)
 
         if not os.path.exists(model_dir):
-            os.makedirs(model_dir)
+            os.makedirs(model_dir, exist_ok=True)
         
         self.result_dir = result_dir
         self.model_dir = model_dir
@@ -215,25 +217,30 @@ class AutoEncoder(LightningModule):
         self.log(f'lr{self.lr}_hidden{self.hidden_size}_wd{self.weight_decay}_{self.task}_test_loss', avg_loss) 
         self.test_losses.clear()
         
-        torch.save(self.encoder.state_dict(), f"{self.model_dir}/encoder.pth")
-        torch.save(self.decoder.state_dict(), f"{self.model_dir}/decoder.pth")
+
+def arg_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--n_devices', type=int, default=1)
+
+    return parser.parse_args()
 
 
 def main():
-    wandb_logger = WandbLogger(project="masked-social-signals")
+    wandb.init()
+    wandb_logger = WandbLogger(entity='tangyiming', project="masked-social-signals")
     hparams = wandb.config
+    args = arg_parser()
 
     seed_everything(hparams.seed)
-
-    torch.cuda.empty_cache()
 
     model = AutoEncoder(task=hparams.task,
                         segment=hparams.segment,
                         hidden_sizes=hparams.hidden_sizes,
+                        result_root_dir=f'{hparams.result_root_dir}/{hparams.seed}/',
+                        pretrained_dir=hparams.pretrained_dir,
                         alpha=hparams.alpha,
                         lr=hparams.lr,
                         weight_decay=hparams.weight_decay,
-                        #warmup_ratio=hparams.warmup_ratio,
                         batch_size=hparams.batch_size)
     
     print(f'\nGrid Search on {hparams.model} model hidden_sizes={hparams.hidden_sizes} lr={hparams.lr} weight_decay={hparams.weight_decay} alpha={hparams.alpha}\n')
@@ -241,9 +248,9 @@ def main():
     name = f'{hparams.model}_lr{hparams.lr}_hidden{hparams.hidden_sizes}_wd{hparams.weight_decay}_alpha{hparams.alpha}'
     wandb_logger.experiment.name = name
 
-    checkpoint_path = f'./checkpoints_autoencoder/{hparams.model}/lr{hparams.lr}_hidden{hparams.hidden_sizes}_wd{hparams.weight_decay}_alpha{hparams.alpha}'
+    checkpoint_path = f'./{hparams.ckpt}/{hparams.task}/{hparams.seed}/lr{hparams.lr}_hidden{hparams.hidden_sizes}_wd{hparams.weight_decay}_alpha{hparams.alpha}'
     if not os.path.exists(checkpoint_path):
-        os.makedirs(checkpoint_path)
+        os.makedirs(checkpoint_path, exist_ok=True)
 
     checkpoint_callback = ModelCheckpoint(
         monitor='val_loss',
@@ -255,6 +262,7 @@ def main():
     trainer = pl.Trainer(accelerator='gpu',
                          callbacks=[checkpoint_callback],
                          max_epochs=hparams.epoch, 
+                         devices=args.n_devices,
                          logger=wandb_logger,
                          num_sanity_val_steps=0,
                          )
@@ -264,12 +272,15 @@ def main():
     best_model = AutoEncoder.load_from_checkpoint(best_model_path)
     trainer.test(best_model)
 
+    torch.save(best_model.encoder.state_dict(), f"{best_model.model_dir}/{hparams.seed}_encoder.pth")
+    torch.save(best_model.decoder.state_dict(), f"{best_model.model_dir}/{hparams.seed}_decoder.pth")
+
         
 if __name__ == '__main__':
     with open('cfgs/autoencoder.yaml', 'r') as f:
         sweep_config = yaml.safe_load(f)
 
-    sweep_id = wandb.sweep(sweep=sweep_config, project="masked-social-signals")
+    sweep_id = wandb.sweep(sweep=sweep_config, entity='tangyiming', project="masked-social-signals")
     wandb.agent(sweep_id, function=main)
 
 

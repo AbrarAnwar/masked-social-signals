@@ -20,14 +20,19 @@ parameters:
     alpha:
       value: 0
     lr: 
-      value: 1e-3
+      values: [1e-3, 3e-4, 1e-4, 3e-5, 3e-3]
     weight_decay: 
-      value: 1e-5
-    #warmup_ratio:
-    #  values: [0.1, 0.2]
+      values: [1e-4, 1e-5, 1e-6]
   
     batch_size:
       value: 16
     
     epoch:
       value: 30
+
+    ckpt:
+      value: 'checkpoints/autoencoder5'
+    result_root_dir:
+      value: 'results/autoencoder5'
+    pretrained_dir:
+      value: 'pretrained5'

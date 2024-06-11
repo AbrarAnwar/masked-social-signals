@@ -1,5 +1,5 @@
 import torch
-import numpy as np
+from tqdm import tqdm
 
 class Normalizer():
     def __init__(self, loader) -> None:
@@ -16,7 +16,7 @@ class Normalizer():
         min_y = torch.full((total_task,), float('inf'))
         max_y = torch.full((total_task,), float('-inf'))
 
-        for batch in self.loader:
+        for batch in tqdm(self.loader):
             for task_idx, task in enumerate(self.normalizer.keys()):
                 current = batch[task]
 

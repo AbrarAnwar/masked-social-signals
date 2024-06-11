@@ -1,25 +1,17 @@
 import json
-from pathlib import Path
-import csv
 import numpy as np
 import os
-from words import seconds_to_frame
+from preprocess.words import seconds_to_frame
+from utils.utils import smoothing
+from utils.embeddings import get_word_embeddings
 
-word_dir = 'dining_dataset/words/v1/'
-gaze_dir = 'dining_dataset/full_gazes/'
-keypoints_dir = 'dining_dataset/clean_keypoints/'
-bite_time = 'dining_dataset/processed_bite/'
+word_dir = '/home/tangyimi/social_signal/dining_dataset/words/v1/'
+gaze_dir = '/home/tangyimi/social_signal/dining_dataset/full_gazes/'
+keypoints_dir = '/home/tangyimi/social_signal/dining_dataset/clean_keypoints/'
+bite_time = '/home/tangyimi/social_signal/dining_dataset/processed_bite/'
 
-# write to jsonline file 9k lines
-# {id , word, status_speaker, whisper_speaker, gaze:, headpose, body, face}
-#
-#
-#  id , word, status_speaker, whisper_speaker, in words folder on each video
-#   gaze:, headpose in each video and each person
-#   body, face in each video and each person
 
 def read_word():
-
     for i in range(30):
         if i+1 == 9:
             continue
@@ -32,7 +24,6 @@ def read_word():
 
 
 def read_gazepose():
-
     for i in range(30):
         result = []
 
@@ -51,7 +42,6 @@ def read_gazepose():
      
 
 def read_keypoint():
-
     for i in range(30):
         result = []
         if i+1 == 9:
@@ -64,6 +54,7 @@ def read_keypoint():
 
         yield result
 
+
 def read_bite():
     for i in range(30):
         if i+1 == 9:
@@ -74,13 +65,12 @@ def read_bite():
         yield bite
 
 
-def write_to_batch(window_size, stride_size, is_second=True):
+def write_to_batch(window_size, stride_size, version, is_second=True):
     window, stride = (seconds_to_frame(window_size), seconds_to_frame(stride_size)) if is_second else (window_size, stride_size)
 
     # create directory for batch
-    target_dir = 'dining_dataset/batch_window{}_stride{}_v3/'.format(window_size, stride_size)
-    target = Path(target_dir)
-    target.mkdir(parents=True, exist_ok=True)
+    target_dir = f'dining_dataset/batch_window{window_size}_stride{stride_size}_{version}/'
+    os.makedirs(target_dir)
 
     for (idx, words), headpose_gaze, pose, bite in zip(read_word(), read_gazepose(), read_keypoint(), read_bite()):
         print(idx+1)
@@ -106,24 +96,28 @@ def write_to_batch(window_size, stride_size, is_second=True):
             all_word = [['' for _ in range(window)] for _ in range(4)]
             status = np.zeros((4, window))
             whisper = np.zeros((4, window))
+
             
             for i, w in enumerate(word_segment):
                 #print(w['whisper_speaker'])
                 all_word[int(w['whisper_speaker'])][i] = w['words']
                 status[int(w['status_speaker']), i] = 1
                 whisper[int(w['whisper_speaker']), i] = 1
-                
+            
+            all_word_embedding = get_word_embeddings(all_word).cpu().numpy()
+
             for i in range(3):
-                each_person[i]['word'] = np.array(all_word[i+1])
+                each_person[i]['word'] = all_word_embedding[i+1]
                 each_person[i]['status_speaker'] = status[i+1]
                 each_person[i]['whisper_speaker'] = whisper[i+1]
-            
             
             # headpose, gaze, pose, and bite (shape = (segment, feature_dim))
             headpose_segment = [headpose[start:end] for headpose, _ in headpose_gaze]
             gaze_segment = [gaze[start:end] for _, gaze in headpose_gaze]
             pose_segment = [pose[start:end] for pose in pose]
             bite_segment = bite[start:end]
+
+            pose_segment = smoothing(pose_segment)
 
             for i in range(3):
                 each_person[i]['headpose'] = np.array(headpose_segment[i])
@@ -148,9 +142,8 @@ def write_to_batch(window_size, stride_size, is_second=True):
             np.savez(target_path, **save_dict)
 
             start += stride
-            count += 1
-    
+            count += 1    
 
 if '__main__' == __name__:  
-    write_to_batch(36, 18)
+    write_to_batch(window_size=36, stride_size=18, version='v4')
     #write_to_batch(9, 5)
