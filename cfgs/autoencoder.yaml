@@ -14,25 +14,25 @@ parameters:
       value: 'gaze'
     segment:
       value: 12
+    segment_length:
+      value: 90
     hidden_sizes: 
       #value: [512]
       value: [128]
+    
     alpha:
       value: 0
     lr: 
-      values: [1e-3, 3e-4, 1e-4, 3e-5, 3e-3]
+      value: 1e-3
     weight_decay: 
-      values: [1e-4, 1e-5, 1e-6]
-  
+      value: 1e-5
     batch_size:
       value: 16
+    strategy:
+      value: 'ddp'
     
     epoch:
-      value: 30
+      value: 1
 
     ckpt:
-      value: 'checkpoints/autoencoder5'
-    result_root_dir:
-      value: 'results/autoencoder5'
-    pretrained_dir:
-      value: 'pretrained5'
+      value: 'checkpoints/test'

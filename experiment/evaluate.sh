@@ -1,5 +1,0 @@
-#srun --gres=gpu:a6000:1 --time 4200 --nodelist glamor-ruby python -m evaluate --model_path '/home/tangyimi/masked_mine/ckpt3632/transformer/None/lr0.006_wd1e-05_frozenFalse_warmup0.2_featurerepeat/best.ckpt'
-#srun --gres=gpu:a6000:1 --time 4200 --nodelist dill-sage python -m experiment.evaluate --model_path='/home/tangyimi/masked-social-signals/checkpoints/transformer8/multi/feature_filling=repeat_frozen=False_lr=0.0003_weight_decay=1e-06/best.ckpt'
-srun --gres=gpu:a6000:1 --time 4200 python -m experiment.evaluate --model_path='./checkpoints/transformer9/multi/alpha=0_frozen=False_lr=0.0003/best.ckpt'
-srun --gres=gpu:a6000:1 --time 4200 python -m experiment.evaluate --model_path='./checkpoints/transformer9/multi/alpha=0.25_frozen=True_lr=0.0003/best.ckpt'
-srun --gres=gpu:a6000:1 --time 4200 python -m experiment.evaluate --model_path='./checkpoints/transformer9/multi/alpha=0.5_frozen=False_lr=0.0005/best.ckpt'

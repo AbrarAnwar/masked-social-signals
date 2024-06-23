@@ -1,0 +1,49 @@
+method: 'grid'
+name: 'vqvae'
+metric: 
+    name: 'val_loss'
+    goal: 'minimize'   
+
+parameters: 
+    seed:
+      value: 42
+    model:
+      value: 'vqvae'
+
+    task:
+      value: 'pose'
+    segment:
+      value: 12
+    segment_length:
+      value: 45
+
+    h_dim:
+      value: 128
+    res_h_dim:
+      value: 32
+    n_res_layers:
+      value: 2
+    n_embeddings:
+      value: 1024
+    embedding_dim:
+      value: 64
+    beta:
+      value: 0.25
+
+    lr: 
+      value: 5e-4
+    weight_decay: 
+      value: 1e-6
+    batch_size:
+      value: 32
+    strategy:
+      value: 'ddp'
+    
+
+    epoch:
+      value: 1
+
+    ckpt:
+      value: 'checkpoints/test'
+
+    

@@ -1,16 +1,19 @@
-from models.transformer import MaskTransformer
+from experiment.module import VQVAE_Module, AutoEncoder_Module
 from utils.dataset import get_loaders
+from utils.visualize import visualize
 from evaluation.metric import PCK, FID, W1
 from lightning.pytorch.loggers import WandbLogger
 import lightning.pytorch as pl
 import argparse, wandb, torch, os
 from tqdm import tqdm
+import torch.nn.functional as F
 
 def get_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--model_path", type=str)
-    parser.add_argument("--single", action='store_true', help='for transformer only contains one feature')
+    parser.add_argument("--result_dir", type=str)
+    parser.add_argument("--pretrained_dir", type=str)
 
     return parser.parse_args()
 
@@ -34,7 +37,8 @@ def pretty_print(PCK, FID, W1):
 def evaluate(model_path):
     tasks = ['headpose','gaze','pose', 'speaker','bite']
 
-    model = MaskTransformer.load_from_checkpoint(model_path)
+    #model = MaskTransformer.load_from_checkpoint(model_path)
+    model = VQVAE_Module.load_from_checkpoint(model_path)
     pck = PCK()
     fids = {task:FID() for task in tasks}
     w1s = {task:W1() for task in tasks}
@@ -52,7 +56,7 @@ def evaluate(model_path):
     with torch.no_grad():
         for batch in tqdm(val_dataloader):
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-            ys, preds = model.forward(batch)
+            ys, preds, _ = model.forward(batch)
 
             for task_idx, task in enumerate(tasks[:-2]):
                 y = ys[task_idx]
@@ -71,46 +75,40 @@ def evaluate(model_path):
                 w1s[task](y_undo, pred_undo)
     pretty_print(pck, fids, w1s)
 
-    #     segment = 12
-    #     for batch in tqdm(train_dataloader):
-    #         speaker = batch['speaker']
-    #         bite = batch['bite']
-    #         bz = speaker.size(0)
 
-    #         # count 1s and 0s in speaker and bite
-    #         speaker_reshaped = speaker.reshape(bz, 3, segment, -1) # (bz, 3, 6, 180)
-    #         speaker_sum = speaker_reshaped.sum(dim=-1) # (bz, 3, 180)
-    #         speaker_tranformed = (speaker_sum > 0.3 * 90).float().unsqueeze(-1)
 
-    #         bite_reshaped = bite.reshape(bz, 3, segment, -1) # (bz*3, 6, 180)
-    #         bite_sum = bite_reshaped.sum(dim=-1) # (bz, 3, 180)
-    #         bite_tranformed = (bite_sum >= 1).float().unsqueeze(-1)
+def test(model_path, result_dir):
+    model = VQVAE_Module.load_from_checkpoint(model_path)
 
-    #         speaker_1s += speaker_tranformed.sum()
-    #         bite_1s += bite_tranformed.sum()
+    os.makedirs(result_dir, exist_ok=True)
 
-    #         # count total
-    #         speaker_total += speaker_tranformed.numel()
-    #         bite_total += bite_tranformed.numel()
+    test_losses = []
+    
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = model.to(device)
+    model.eval()
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(tqdm(val_dataloader)):
+            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            y, y_hat, _ = model.forward(batch)
+            loss = F.mse_loss(y_hat, y, reduction='mean')
+            test_losses.append(loss)
+            if batch_idx >=  len(val_dataloader) - 2:
+                file_name = f'{result_dir}/{batch_idx}'
+                visualize(model.task, model.normalizer, y, y_hat, file_name)
+
+    print(f"Test loss: {torch.stack(test_losses).mean()}")
+
+def save_model(model_path, pretrain_path):
+    os.makedirs(pretrain_path, exist_ok=True)
+    if 'autoencoder' in model_path:
+        model = AutoEncoder_Module.load_from_checkpoint(model_path)
+        model.autoencoder.save(f"{pretrain_path}/autoencoder.pth")
+    elif 'vqvae' in model_path:
+        model = VQVAE_Module.load_from_checkpoint(model_path)
+        model.model.save(f"{pretrain_path}/vqvae.pth")
 
     
-    # print(f"Speaker: {speaker_1s/speaker_total:.4f}")
-    # print(f"Bite: {bite_1s/bite_total:.4f}")
-    # print(f'Speaker_1s: {speaker_1s}')
-    # print(f'Bite_1s: {bite_1s}')
-
-def test(model_path):
-    model = MaskTransformer.load_from_checkpoint(model_path)
-    os.environ['WANDB_SILENT'] = 'true'
-    wandb.init(entity='tangyiming', project="masked-social-signals")
-    wandb_logger = WandbLogger(entity='tangyiming', project="masked-social-signals")
-    wandb_logger.experiment.name = model.experiment_name
-
-    tester = pl.Trainer(logger=wandb_logger)
-
-    tester.test(model, dataloaders=val_dataloader)
-    wandb.finish()
-            
 
 if __name__ == '__main__':
     _, val_dataloader, test_dataloader = get_loaders(batch_path='/home/tangyimi/masked-social-signals/dining_dataset/batch_window36_stride18_v4', 
@@ -118,6 +116,7 @@ if __name__ == '__main__':
                                                 batch_size=32, 
                                                 num_workers=2)
     args = get_args()
-    test(args.model_path)
-    evaluate(args.model_path)
+    #test(args.model_path, args.result_dir)
+    save_model(args.model_path, args.pretrained_dir)
+    #evaluate(args.model_path)
     

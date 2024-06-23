@@ -57,14 +57,16 @@ class MultiDataset(Dataset):
 
             
 def get_loaders(batch_path, validation_idx, batch_size, num_workers):
-    complete_train_dataset = MultiDataset(batch_path, validation_idx, training=True)
+    dataset = MultiDataset(batch_path, validation_idx, training=True)
 
-    split = int(0.9 * len(complete_train_dataset)) # 8/2 9/1
-    train_indices = list(range(split))
-    val_indices = list(range(split, len(complete_train_dataset)))
+    val_size = int(0.1 * len(dataset))
+    start_idx = np.random.randint(0, len(dataset) - val_size)
+    
+    val_indices = list(range(start_idx, start_idx + val_size))
+    train_indices = list(set(range(len(dataset))) - set(val_indices))
 
-    train_dataset = Subset(complete_train_dataset, train_indices)
-    val_dataset = Subset(complete_train_dataset, val_indices)
+    train_dataset = Subset(dataset, train_indices)
+    val_dataset = Subset(dataset, val_indices)
     test_dataset = MultiDataset(batch_path, validation_idx, training=False)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
@@ -85,7 +87,8 @@ if __name__ == '__main__':
     train_loader, val_loader, test_loader = get_loaders(batch_path, validation_idx, batch_size, num_workers)
 
     for batch_idx, batch in enumerate(val_loader):
-        print(f'batch_idx: {batch_idx}')
+        print('batch word:', batch['word'].shape)
+        break
         
         
 
