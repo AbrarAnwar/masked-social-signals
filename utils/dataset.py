@@ -56,8 +56,8 @@ class MultiDataset(Dataset):
                 'bite': torch.stack(bite)}
 
             
-def get_loaders(batch_path, validation_idx, batch_size, num_workers):
-    dataset = MultiDataset(batch_path, validation_idx, training=True)
+def get_loaders(batch_path, test_idx, batch_size, num_workers):
+    dataset = MultiDataset(batch_path, test_idx, training=True)
 
     val_size = int(0.1 * len(dataset))
     start_idx = np.random.randint(0, len(dataset) - val_size)
@@ -67,7 +67,7 @@ def get_loaders(batch_path, validation_idx, batch_size, num_workers):
 
     train_dataset = Subset(dataset, train_indices)
     val_dataset = Subset(dataset, val_indices)
-    test_dataset = MultiDataset(batch_path, validation_idx, training=False)
+    test_dataset = MultiDataset(batch_path, test_idx, training=False)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False, num_workers=num_workers)
@@ -80,11 +80,11 @@ def get_loaders(batch_path, validation_idx, batch_size, num_workers):
 
 if __name__ == '__main__':
     batch_path = '/home/tangyimi/masked-social-signals/dining_dataset/batch_window36_stride18_v4'
-    validation_idx = 30
+    test_idx = 30
     batch_size = 8
     num_workers = 2
 
-    train_loader, val_loader, test_loader = get_loaders(batch_path, validation_idx, batch_size, num_workers)
+    train_loader, val_loader, test_loader = get_loaders(batch_path, test_idx, batch_size, num_workers)
 
     for batch_idx, batch in enumerate(val_loader):
         print('batch word:', batch['word'].shape)

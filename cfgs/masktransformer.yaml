@@ -22,23 +22,24 @@ parameters:
       value: True
     feature_filling:
       value: 'repeat'
-    feature_mask:
-      value: 'multi'
 
     lr: 
-      value: 3e-4
+      value: 5e-4
     weight_decay: 
-      value: 1e-6
+      value: 1e-5
     alpha:
-      value: 0.25
+      value: 0
     batch_size:
       value: 32
     strategy:
       value: 'ddp_find_unused_parameters_true'
 
+    test_idx:
+      values: [26, 27, 28, 29]
+
     
     n_layer:
-      value: 48
+      value: 12
     n_head:
       value: 16
     activation_function: 
@@ -53,9 +54,9 @@ parameters:
       value: 18
 
     epoch:
-      value: 1
+      value: 150
 
     ckpt:
-      value: 'checkpoints/test'
+      value: 'checkpoints/transformer_vq/kfold'
 
     

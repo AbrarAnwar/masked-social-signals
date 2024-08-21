@@ -177,11 +177,15 @@ class Attention(nn.Module):
 
         if not self.is_cross_attention:
             # if only "normal" attention layer implements causal mask
+            #import pdb; pdb.set_trace()
+            # # TODO: make sure this looks correct
             mask = self.bias[:, :, ns - nd: ns, :ns]
             w = torch.where(mask.bool(), w, self.masked_bias.to(w.dtype))
 
         if attention_mask is not None:
             # Apply the attention mask
+            # import pdb; pdb.set_trace()
+            # # TODO: Check if this is correct too, if it is called at all.
             w = w + attention_mask
 
         w = nn.Softmax(dim=-1)(w)

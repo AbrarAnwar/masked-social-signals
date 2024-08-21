@@ -97,9 +97,9 @@ def visualize(task, normalizer, y, y_hat, file_name):
     current_y_hat = normalizer.minmax_denormalize(y_hat, task)
 
     videos_prediction = construct_batch_video(current_y_hat, task=task)
-    videos_inference = construct_batch_video(current_y, task=task, color=(0,0,255))
+    videos_truth = construct_batch_video(current_y, task=task, color=(0,0,255))
 
-    result_videos = np.concatenate([videos_prediction, videos_inference], axis=2)
+    result_videos = np.concatenate([videos_prediction, videos_truth], axis=2)
 
     for i in range(current_y.size(0)):
         new_file_name = file_name + '_' + str(output) + '.mp4'

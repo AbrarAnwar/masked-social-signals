@@ -3,11 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from utils.utils import freeze
 from lightning import LightningModule
+#from models.vqvae import VectorQuantizer
 
 
-class Encoder(nn.Module):
+class LinearEncoder(nn.Module):
     def __init__(self, input_dim, hidden_sizes, activation=True, frozen=False):
-        super(Encoder, self).__init__()
+        super(LinearEncoder, self).__init__()
 
         layers = []
         prev_size = input_dim
@@ -31,9 +32,9 @@ class Encoder(nn.Module):
         freeze(self.network)
 
 
-class Decoder(nn.Module):
+class LinearDecoder(nn.Module):
     def __init__(self, output_dim, hidden_sizes):
-        super(Decoder, self).__init__()
+        super(LinearDecoder, self).__init__()
 
         layers = []
         prev_size = hidden_sizes[0]
@@ -48,21 +49,44 @@ class Decoder(nn.Module):
     def forward(self, x):
         return self.network(x)
 
+# write a residual block using mlp
+class RedisualBlock(nn.Module):
+    def __init__(self, in_dim, h_dims):
+        super(RedisualBlock, self).__init__()
+        self.block = AutoEncoder(in_dim, h_dims)
 
-class AutoEncoder(nn.Module):
+    def forward(self, x):
+        return x + self.block(x)
+
+
+class BaseModel(nn.Module):
+    def __init__(self):
+        super(BaseModel, self).__init__()
+
+    def save(self, path):
+        torch.save(self.state_dict(), path)
+
+    def load(self, path):
+        self.load_state_dict(torch.load(path))
+
+
+class AutoEncoder(BaseModel):
     def __init__(self, input_dim, 
                     hidden_sizes, 
                     pretrained=None,
                     frozen=False):
         super(AutoEncoder, self).__init__()
-        self.encoder = Encoder(input_dim, hidden_sizes)
-        self.decoder = Decoder(input_dim, hidden_sizes[::-1])
+        self.encoder = LinearEncoder(input_dim, hidden_sizes)
+        self.decoder = LinearDecoder(input_dim, hidden_sizes[::-1])
 
         if pretrained:
             self.load(pretrained)
 
+        # if frozen:
+        #     self.freeze()
+        freeze(self.encoder)
         if frozen:
-            self.freeze()
+            freeze(self.decoder)
             
 
     def forward(self, x):
@@ -80,10 +104,37 @@ class AutoEncoder(nn.Module):
         freeze(self.encoder)
         #freeze(self.decoder)
 
-    def save(self, path):
-        torch.save(self.state_dict(), path)
+'''
+class VQVAE(BaseModel):
+    def __init__(self, input_dim, 
+                    hidden_sizes, 
+                    n_embeddings,
+                    beta,
+                    pretrained=None,
+                    frozen=False):
+        super(VQVAE, self).__init__()
+        self.encoder = LinearEncoder(input_dim, hidden_sizes)
+        self.encoder_residual_block = RedisualBlock(hidden_sizes[-1], [256])
 
-    def load(self, path):
-        self.load_state_dict(torch.load(path))
+        self.vector_quantization = VectorQuantizer(
+            n_embeddings, hidden_sizes[-1], beta)
 
+        self.decoder_residual_block = RedisualBlock(hidden_sizes[-1], [256])
+        self.decoder = LinearDecoder(input_dim, hidden_sizes[::-1])
+        
 
+    def forward(self, x):
+        z_e = self.encoder(x)
+        z_e = self.encoder_residual_block(z_e)
+
+        z_e = z_e.unsqueeze(1).unsqueeze(1)
+        embedding_loss, z_q = self.vector_quantization(z_e)
+        z_q = z_q.squeeze(1).squeeze(1)
+
+        x_hat = self.decoder_residual_block(x_hat)
+        x_hat = self.decoder(z_q)
+        
+
+        return embedding_loss, x_hat
+
+'''

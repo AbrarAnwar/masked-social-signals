@@ -11,29 +11,34 @@ parameters:
       value: 'vqvae'
 
     task:
-      value: 'pose'
+      value: 'headpose'
     segment:
       value: 12
-    segment_length:
-      value: 45
 
+
+    hidden_sizes: 
+      value: [1024]
     h_dim:
       value: 128
+    kernel:
+      value: 3
+    stride:
+      value: 1
     res_h_dim:
       value: 32
     n_res_layers:
       value: 2
     n_embeddings:
-      value: 1024
+      value: 512
     embedding_dim:
-      value: 64
+      value: 32
     beta:
       value: 0.25
 
     lr: 
-      value: 5e-4
+      values: [5e-4, 3e-4]
     weight_decay: 
-      value: 1e-6
+      values: [1e-6, 1e-5]
     batch_size:
       value: 32
     strategy:
@@ -41,9 +46,9 @@ parameters:
     
 
     epoch:
-      value: 1
+      value: 150
 
     ckpt:
-      value: 'checkpoints/test'
+      value: 'checkpoints/vqvae_1d'
 
     

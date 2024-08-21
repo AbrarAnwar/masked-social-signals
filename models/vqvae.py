@@ -4,93 +4,46 @@ import torch.nn as nn
 import torch.nn.functional as F
 from lightning import LightningModule
 from utils.utils import freeze
+from models.autoencoder import AutoEncoder
 
 
-class Encoder(nn.Module):
-    """
-    This is the q_theta (z|x) network. Given a data sample x q_theta 
-    maps to the latent space x -> z.
+class CNNEncoder(nn.Module):
 
-    For a VQ VAE, q_theta outputs parameters of a categorical distribution.
-
-    Inputs:
-    - in_dim : the input dimension
-    - h_dim : the hidden layer dimension
-    - res_h_dim : the hidden dimension of the residual block
-    - n_res_layers : number of layers to stack
-
-    """
-
-    def __init__(self, in_dim, h_dim, n_res_layers, res_h_dim):
-        super(Encoder, self).__init__()
-        kernel = 3
-        stride = 2
+    def __init__(self, in_dim, h_dim, kernel, stride, n_res_layers, res_h_dim):
+        super(CNNEncoder, self).__init__()
         self.conv_stack = nn.Sequential(
-            nn.Conv2d(in_dim, h_dim, kernel_size=kernel,
+            nn.Conv1d(in_dim, h_dim, kernel_size=kernel,
                       stride=stride, padding=1),
-            # nn.ReLU(),
-            # nn.Conv2d(h_dim // 2, h_dim, kernel_size=kernel,
-            #           stride=stride, padding=1),
-            # nn.ReLU(),
-            # nn.Conv2d(h_dim, h_dim, kernel_size=kernel-1,
-                    #   stride=stride-1, padding=1),
             ResidualStack(
                 h_dim, h_dim, res_h_dim, n_res_layers)
-
         )
 
     def forward(self, x):
         return self.conv_stack(x)
 
 
-class Decoder(nn.Module):
-    """
-    This is the p_phi (x|z) network. Given a latent sample z p_phi 
-    maps back to the original space z -> x.
+class CNNDecoder(nn.Module):
 
-    Inputs:
-    - in_dim : the input dimension
-    - h_dim : the hidden layer dimension
-    - res_h_dim : the hidden dimension of the residual block
-    - n_res_layers : number of layers to stack
-
-    """
-
-    def __init__(self, in_dim, h_dim, n_res_layers, res_h_dim):
-        super(Decoder, self).__init__()
-        kernel = 3
-        stride = 2
-
+    def __init__(self, in_dim, h_dim, kernel, stride, n_res_layers, res_h_dim):
+        super(CNNDecoder, self).__init__()
         self.inverse_conv_stack = nn.Sequential(
-            nn.ConvTranspose2d(
-                in_dim, 2, kernel_size=kernel, stride=stride, padding=1), #output_padding=1),
-            ResidualStack(2, 2, res_h_dim, n_res_layers),
-            # nn.ConvTranspose2d(h_dim, h_dim // 2,
-            #                    kernel_size=kernel, stride=stride, padding=1),
-            # nn.ReLU(),
-            # nn.ConvTranspose2d(h_dim//2, 3, kernel_size=kernel,
-                            #    stride=stride, padding=1)
+            ResidualStack(in_dim,in_dim, res_h_dim, n_res_layers),
+            nn.ConvTranspose1d(
+                in_dim, h_dim, kernel_size=kernel, stride=stride, padding=1), #output_padding=1),
         )
 
     def forward(self, x):
         return self.inverse_conv_stack(x)
 
 class ResidualLayer(nn.Module):
-    """
-    One residual layer inputs:
-    - in_dim : the input dimension
-    - h_dim : the hidden layer dimension
-    - res_h_dim : the hidden dimension of the residual block
-    """
-
     def __init__(self, in_dim, h_dim, res_h_dim):
         super(ResidualLayer, self).__init__()
         self.res_block = nn.Sequential(
             nn.ReLU(True),
-            nn.Conv2d(in_dim, res_h_dim, kernel_size=3,
+            nn.Conv1d(in_dim, res_h_dim, kernel_size=3,
                       stride=1, padding=1, bias=False),
             nn.ReLU(True),
-            nn.Conv2d(res_h_dim, h_dim, kernel_size=1,
+            nn.Conv1d(res_h_dim, h_dim, kernel_size=1,
                       stride=1, bias=False)
         )
 
@@ -100,14 +53,6 @@ class ResidualLayer(nn.Module):
 
 
 class ResidualStack(nn.Module):
-    """
-    A stack of residual layers inputs:
-    - in_dim : the input dimension
-    - h_dim : the hidden layer dimension
-    - res_h_dim : the hidden dimension of the residual block
-    - n_res_layers : number of layers to stack
-    """
-
     def __init__(self, in_dim, h_dim, res_h_dim, n_res_layers):
         super(ResidualStack, self).__init__()
         self.n_res_layers = n_res_layers
@@ -122,14 +67,6 @@ class ResidualStack(nn.Module):
 
 
 class VectorQuantizer(nn.Module):
-    """
-    Discretization bottleneck part of the VQ-VAE.
-
-    Inputs:
-    - n_e : number of embeddings
-    - e_dim : dimension of embedding
-    - beta : commitment cost used in loss term, beta * ||z_e(x)-sg[e]||^2
-    """
 
     def __init__(self, n_e, e_dim, beta):
         super(VectorQuantizer, self).__init__()
@@ -141,22 +78,8 @@ class VectorQuantizer(nn.Module):
         self.embedding.weight.data.uniform_(-1.0 / self.n_e, 1.0 / self.n_e)
 
     def forward(self, z):
-        """
-        Inputs the output of the encoder network z and maps it to a discrete 
-        one-hot vector that is the index of the closest embedding vector e_j
-
-        z (continuous) -> z_q (discrete)
-
-        z.shape = (batch, people, xys * frames)
-
-        quantization pipeline:
-
-            1. get encoder input (B,C,H,W)
-            2. flatten input to (B*H*W,C)
-
-        """
         # reshape z -> (batch, height, width, channel) and flatten
-        z = z.permute(0, 2, 3, 1).contiguous()
+
         z_flattened = z.view(-1, self.e_dim)
         # distances from z to embeddings e_j (z - e)^2 = z^2 + e^2 - 2 e * z
 
@@ -184,34 +107,38 @@ class VectorQuantizer(nn.Module):
         e_mean = torch.mean(min_encodings, dim=0)
         perplexity = torch.exp(-torch.sum(e_mean * torch.log(e_mean + 1e-10)))
 
-        # reshape back to match original input shape
-        z_q = z_q.permute(0, 3, 1, 2).contiguous()
-
-        return loss, z_q #, perplexity ,min_encodings, min_encoding_indices
+        return loss, z_q, perplexity #,min_encodings, min_encoding_indices
 
 
 
 class VQVAE(nn.Module):
     def __init__(self, 
+                hidden_sizes,
+                in_dim,
                 h_dim, 
+                kernel,
+                stride,
                 res_h_dim, 
                 n_res_layers,
                 n_embeddings, 
                 embedding_dim, 
+                segment_length,
                 beta, 
                 pretrained=None,
                 frozen=False
                 ):
         super(VQVAE, self).__init__()
         # encode image into continuous latent space
-        self.encoder = Encoder(2, h_dim, n_res_layers, res_h_dim)
-        self.pre_quantization_conv = nn.Conv2d(
+        self.encoder = CNNEncoder(in_dim, h_dim, kernel, stride, n_res_layers, res_h_dim)
+        self.pre_quantization_conv = nn.Conv1d(
             h_dim, embedding_dim, kernel_size=1, stride=1)
         # pass continuous latent vector through discretization bottleneck
         self.vector_quantization = VectorQuantizer(
             n_embeddings, embedding_dim, beta)
+
+        self.linear_projector = AutoEncoder(embedding_dim * segment_length, hidden_sizes)
         # decode the discrete latent representation
-        self.decoder = Decoder(embedding_dim, h_dim, n_res_layers, res_h_dim)
+        self.decoder = CNNDecoder(embedding_dim, in_dim, kernel, stride, n_res_layers, res_h_dim)
 
         if pretrained:
             self.load(pretrained)
@@ -221,33 +148,37 @@ class VQVAE(nn.Module):
 
     def forward(self, x):
 
-        z_e = self.encoder(x)
+        embedding_loss1, z_q, _ = self.encode(x)
+        embedding_loss2, x_hat, perplexity = self.decode(z_q)
 
-        z_e = self.pre_quantization_conv(z_e)
-        #print(f'z_e: {z_e.shape}')
-        embedding_loss, z_q = self.vector_quantization(
-            z_e)
-        #print(f'z_q: {z_q.shape}')
-        x_hat = self.decoder(z_q)
+        return (embedding_loss1 + embedding_loss2) / 2 , x_hat, perplexity
 
-        return embedding_loss, x_hat #, perplexity
-
-
+    # TODO: modify encode and decode
     def encode(self, x):
+        x = x.permute(0, 2, 1).contiguous()
         z_e = self.encoder(x)
         z_e = self.pre_quantization_conv(z_e)
-        embedding_loss, z_q = self.vector_quantization(z_e)
-        return embedding_loss, z_q
+        embedding_loss, z_q, perplexity = self.vector_quantization(z_e)
+        self.hidden_shape = z_q.shape
+        z_q = z_q.flatten(start_dim=1)
+        linear_proj = self.linear_projector.encode(z_q)
+        return embedding_loss, linear_proj, perplexity
 
 
     def decode(self, z):
-        return self.decoder(z)
+        linear_proj = self.linear_projector.decode(z)
+        z_reshaped = linear_proj.view(self.hidden_shape)
+        embedding_loss, z_e, perplexity = self.vector_quantization(z_reshaped)
+        x_hat = self.decoder(z_e).permute(0, 2, 1).contiguous()
+        return embedding_loss, x_hat, perplexity
+        
 
     def freeze(self):
         freeze(self.encoder)
         freeze(self.pre_quantization_conv)
         freeze(self.vector_quantization.embedding)
-        #freeze(self.decoder)
+        freeze(self.linear_projector)
+        freeze(self.decoder)
         
 
     def save(self, path):

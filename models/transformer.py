@@ -5,7 +5,7 @@ from lightning import LightningModule
 import lightning.pytorch as pl
 import transformers
 
-from models.autoencoder import Encoder, Decoder, AutoEncoder
+from models.autoencoder import LinearEncoder, LinearDecoder, AutoEncoder
 from models.gpt2 import GPT2Model
 from models.vqvae import VQVAE
 
@@ -13,7 +13,6 @@ from models.vqvae import VQVAE
 class MaskTransformer(nn.Module):
     def __init__(
             self,
-            normalizer,
             hidden_size,
             segment,
             frozen,
@@ -24,7 +23,6 @@ class MaskTransformer(nn.Module):
     ):
         super().__init__()
         self.task_list = ['gaze', 'headpose', 'pose', 'word', 'speaker', 'bite']
-        self.normalizer = normalizer
         self.segment = segment
         self.segment_length = 1080 // segment
         self.hidden_size = hidden_size
@@ -39,23 +37,55 @@ class MaskTransformer(nn.Module):
         )
         self.transformer = GPT2Model(config)
 
-        self.gaze_autoencoder = AutoEncoder(2 * 90, [128], frozen=frozen,
-                                            pretrained='/home/tangyimi/masked-social-signals/pretrained_best/gaze/autoencoder.pth')
-        self.headpose_autoencoder = AutoEncoder(2 * 90, [128], frozen=frozen,
-                                            pretrained='/home/tangyimi/masked-social-signals/pretrained_best/headpose/autoencoder.pth')
-        self.word_encoder = Encoder(768, [hidden_size], activation=False, frozen=frozen)
+        # self.gaze_autoencoder = AutoEncoder(2 * 90, [128], frozen=frozen,
+        #                                     pretrained='/home/tangyimi/masked-social-signals/pretrained_best/gaze/autoencoder.pth')
+        # self.headpose_autoencoder = AutoEncoder(2 * 90, [128], frozen=frozen,
+        #                                     pretrained='/home/tangyimi/masked-social-signals/pretrained_best/headpose/autoencoder.pth')
+        self.gaze_vqvae = VQVAE(hidden_sizes=[hidden_size],
+                                    in_dim=2,
+                                    h_dim=128,
+                                    kernel=3,
+                                    stride=1,
+                                    res_h_dim=32,
+                                    n_res_layers=2,
+                                    n_embeddings=512,
+                                    embedding_dim=32,
+                                    segment_length=self.segment_length,
+                                    beta=0.25,
+                                    frozen=frozen,
+                                    pretrained='./pretrained_best/gaze/vqvae.pth')
 
-        self.pose_vqvae = VQVAE(h_dim=128, 
+        self.headpose_vqvae = VQVAE(hidden_sizes=[hidden_size],
+                                    in_dim=2,
+                                    h_dim=128,
+                                    kernel=3,
+                                    stride=1,
+                                    res_h_dim=32,
+                                    n_res_layers=2,
+                                    n_embeddings=512,
+                                    embedding_dim=32,
+                                    segment_length=self.segment_length,
+                                    beta=0.25,
+                                    frozen=frozen,
+                                    pretrained='./pretrained_best/headpose/vqvae.pth')
+
+
+        self.pose_vqvae = VQVAE(hidden_sizes=[hidden_size],
+                           in_dim=26,
+                           h_dim=128, 
+                           kernel=3,
+                           stride=1,
                            res_h_dim=32, 
                            n_res_layers=2,
-                           n_embeddings=1024,
-                           embedding_dim=64,
+                           n_embeddings=512,
+                           embedding_dim=32,
+                           segment_length=self.segment_length//2,
                            beta=0.25,
                            frozen=frozen,
-                           pretrained='/home/tangyimi/masked-social-signals/pretrained_best/pose/vqvae32.pth')
+                           pretrained='./pretrained_best/pose/vqvae.pth')
 
-        self.pose_projector = AutoEncoder(64*23*7, [4096, hidden_size], frozen=frozen)
-        
+
+        self.word_encoder = LinearEncoder(768, [hidden_size], activation=False, frozen=frozen)
         self.speaker_embedding = nn.Embedding(2, hidden_size)
         self.bite_embedding = nn.Embedding(2, hidden_size)
         
@@ -65,20 +95,27 @@ class MaskTransformer(nn.Module):
         self.segment_embedding = nn.Embedding(segment, hidden_size)
 
     def encode(self, x, task):
-        if task == 'pose':
-            # CNN preprocess
+        if task == 'gaze':
+            task_reshaped = x.view(self.bz, 3, self.segment, self.segment_length, -1).view(self.bz*3*self.segment, self.segment_length, -1)
+
+            _, x_hat, _ = self.gaze_vqvae.encode(task_reshaped)
+
+            return x, x_hat.view(self.bz*3, self.segment, -1)
+        
+        elif task == 'headpose':
+            task_reshaped = x.view(self.bz, 3, self.segment, self.segment_length, -1).view(self.bz*3*self.segment, self.segment_length, -1)
+
+            _, x_hat, _ = self.headpose_vqvae.encode(task_reshaped)
+
+            return x, x_hat.view(self.bz*3, self.segment, -1)
+
+        elif task == 'pose':
             segment_length = self.segment_length // 2
-            task_reshaped = x.view(self.bz, 3, self.segment, segment_length, -1)
-            task_reshaped = task_reshaped.view(self.bz*3*self.segment, segment_length, -1)
-            task_z = task_reshaped.view(self.bz*3*self.segment, segment_length, -1, 2). permute(0, 3, 1, 2)
+            task_reshaped = x.view(self.bz, 3, self.segment, segment_length, -1).view(self.bz*3*self.segment, segment_length, -1)
 
-            _, x_hat = self.pose_vqvae.encode(task_z)
-            z = x_hat.permute(0, 2, 3, 1).reshape(self.bz*3*self.segment, -1)
+            _, x_hat, _ = self.pose_vqvae.encode(task_reshaped)
 
-            # projection
-            x_hat = self.pose_projector.encode(z).view(self.bz*3, self.segment, self.hidden_size)
-
-            return x, x_hat
+            return x, x_hat.view(self.bz*3, self.segment, -1)
 
         elif task == 'speaker':
             # embed speaker
@@ -99,49 +136,42 @@ class MaskTransformer(nn.Module):
             bite_embed = self.bite_embedding(bite_tranformed.int()).reshape(self.bz*3, self.segment, -1) # (self.bz, 3, 6, hidden_size)
 
             return bite_tranformed.view(self.bz, 3, self.segment, -1), bite_embed
-        else:
-            # same reshape for all other tasks
-            # but different autoencoder for each task and returns
+        elif task == 'word':
             task_z = x.reshape(self.bz, 3, self.segment, self.segment_length, -1) # (self.bz, 3, 6, 180, feature_dim)
             task_reshaped = task_z.reshape(self.bz*3*self.segment, -1) # (self.bz*3*6, 180, 2)
 
-            if task == 'gaze':
-                encode = self.gaze_autoencoder.encode(task_reshaped).view(self.bz*3, self.segment, -1) 
-                return x, encode
-            elif task == 'headpose':
-                encode = self.headpose_autoencoder.encode(task_reshaped).view(self.bz*3, self.segment, -1) 
-                return x, encode
-            elif task == 'word':
-                word_mean = torch.mean(task_z, dim=3)
-                encode = self.word_encoder(word_mean).view(self.bz*3, self.segment, -1)
-                return None, encode
+            word_mean = torch.mean(task_z, dim=3)
+            encode = self.word_encoder(word_mean).view(self.bz*3, self.segment, -1)
+            return None, encode
 
     def decode(self, output, task):
         task_idx = self.task_list.index(task)
         task_output = output[:, task_idx::len(self.task_list), :]
 
         if task in self.padding_list:
-            task_output = task_output[:, :, :128]
-        
+            if self.feature_filling == 'pad':
+                task_output = task_output[:, :, :128]
+            elif self.feature_filling == 'repeat':
+                task_output = task_output.reshape(task_output.size(0), task_output.size(1), -1, 128).mean(dim=2)
+
         task_output_reshaped = task_output.view(self.bz*3*self.segment, -1)
 
         if task == 'gaze':
-            return self.gaze_autoencoder.decode(task_output_reshaped).view(self.bz, 3, self.segment*self.segment_length, -1)
+            return self.gaze_vqvae.decode(task_output_reshaped)[1].view(self.bz, 3, self.segment*self.segment_length, -1)
 
         elif task == 'headpose':
-            return self.headpose_autoencoder.decode(task_output_reshaped).view(self.bz, 3, self.segment*self.segment_length, -1)
+            return self.headpose_vqvae.decode(task_output_reshaped)[1].view(self.bz, 3, self.segment*self.segment_length, -1)
 
         elif task == 'pose':
-            task_output_reshaped = self.pose_projector.decode(task_output_reshaped).view(self.bz*3*self.segment, 23, 7, 64).permute(0, 3, 1, 2)
-            return self.pose_vqvae.decode(task_output_reshaped).reshape(self.bz, 3, self.segment*self.segment_length // 2, -1)
+            return self.pose_vqvae.decode(task_output_reshaped)[1].view(self.bz, 3, self.segment*self.segment_length//2, -1)
 
         elif task == 'speaker':
             return self.speaker_classifier(task_output_reshaped).view(self.bz, 3, self.segment, -1)
+
         elif task == 'bite':
             return self.bite_classifier(task_output_reshaped).view(self.bz, 3, self.segment, -1)
 
     def padding(self, encode, task):
-
         if encode.size(-1) != self.hidden_size:
             if self.feature_filling == 'pad':
                 encode_padded = F.pad(encode, (0, self.hidden_size - self.small_hidden_size))
@@ -158,9 +188,6 @@ class MaskTransformer(nn.Module):
 
 
     def forward(self, batch):
-        for task in self.task_list[:-3]:
-            batch[task] = self.normalizer.minmax_normalize(batch[task], task)
-
         self.bz = batch['gaze'].size(0)
 
         encode_list = []
@@ -182,7 +209,7 @@ class MaskTransformer(nn.Module):
             ys.append(y)
             encode_list.append(encode_padded)
 
-        # it will make the input as (headpose1, gaze1, pose1, word1, headpose2, gaze2, pose2, word2, ...) (self.bz, 24, 64)
+        # it will make the input as (gaze1, headpose1, pose1, word1, gaze2, headpose2, pose2, word2, ...) (self.bz, 24, 64)
         stacked_inputs = torch.stack(encode_list, dim=1).permute(0, 2, 1, 3).reshape(self.bz*3, len(self.task_list)*self.segment, -1) # (self.bz*3, 24, 64)
 
         # add segment embeddings
@@ -196,7 +223,7 @@ class MaskTransformer(nn.Module):
         feature_mask = self.feature_mask.unsqueeze(0).unsqueeze(2).repeat(1, self.segment, self.hidden_size).expand(self.bz*3, -1, -1).to(stacked_inputs.device)
         stacked_inputs = stacked_inputs * feature_mask
 
-        # it will make the input as (headpose_p1_t1, gaze_p1_t1, pose_p1_t1, word_p1_t1, headpose_p2_t1, gaze_p2_t1, pose_p2_t1, wordp2_t1, ...)
+        # it will make the input as (gaze_p1_t1, headpose_p1_t1, pose_p1_t1, word_p1_t1, gaze_p2_t1, headpose_p2_t1, pose_p2_t1, wordp2_t1, ...)
         stacked_inputs = stacked_inputs.view(self.bz, 3, -1, self.hidden_size).permute(0, 2, 1, 3).reshape(self.bz, -1, self.hidden_size) # (self.bz, 24*3, hidden_size)
 
         output = self.transformer(inputs_embeds=stacked_inputs)['last_hidden_state'] # (self.bz, 24*3, 64)

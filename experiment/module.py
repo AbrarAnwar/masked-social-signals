@@ -21,42 +21,49 @@ FEATURE_MASK_DICT = {'multi': [1,1,1,1,1,1],
                     'speaker_only': [0,0,0,0,1,0],
                     'bite_only': [0,0,0,0,0,1]}
 
-class AutoEncoder_Module(LightningModule):
-    def __init__(self, task, 
-                    segment, 
-                    segment_length,
-                    normalizer,
-                    hidden_sizes, 
-                    alpha, 
-                    lr, 
-                    weight_decay):
-        super().__init__()
+
+class Base_Module(LightningModule):
+    def __init__(self, 
+                segment,
+                normalizer,
+                lr,
+                weight_decay):
+        super(Base_Module, self).__init__()
         self.save_hyperparameters()
-        self.task = task
         self.segment = segment
-        self.segment_length = segment_length   
-        self.autoencoder = AutoEncoder(FEATURES[self.task] * self.segment_length, hidden_sizes)
-
         self.normalizer = normalizer
-
-        self.alpha = alpha
         self.lr = lr
         self.weight_decay = weight_decay
-
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), 
                                      lr=self.lr, 
                                      weight_decay=self.weight_decay)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 
-                                                               T_max=self.trainer.max_epochs) 
-        return [optimizer], [scheduler]
-        
-    
-    # def configure_optimizers(self):
-    #     return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay) 
-    
 
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer,
+                                                                            T_0=5,
+                                                                            T_mult=2, 
+                                                                            eta_min=1e-6)
+        return [optimizer], [scheduler]
+
+
+class AutoEncoder_Module(Base_Module):
+    def __init__(self, task, 
+                    segment, 
+                    segment_length,
+                    hidden_sizes, 
+                    alpha, 
+                    normalizer,
+                    lr, 
+                    weight_decay):
+        super(AutoEncoder_Module, self).__init__(segment, normalizer, lr, weight_decay)
+        self.save_hyperparameters()
+        self.task = task
+        self.segment_length = segment_length   
+        self.model = AutoEncoder(FEATURES[self.task] * self.segment_length, hidden_sizes)
+
+        self.alpha = alpha
+    
     def forward(self, batch):
         batch[self.task] = self.normalizer.minmax_normalize(batch[self.task], self.task)
 
@@ -93,77 +100,70 @@ class AutoEncoder_Module(LightningModule):
 
         
 
-class VQVAE_Module(LightningModule):
+class VQVAE_Module(Base_Module):
     def __init__(self, 
-                normalizer,
+                hidden_sizes,
                 h_dim,
+                kernel,
+                stride,
                 res_h_dim,
                 n_res_layers,
                 n_embeddings,
                 embedding_dim,
                 beta,
-                lr,
-                weight_decay,
                 task,
                 segment,
-                segment_length,):
-        super(VQVAE_Module, self).__init__()
+                normalizer,
+                lr,
+                weight_decay,):
+        super(VQVAE_Module, self).__init__(segment, normalizer, lr, weight_decay)
         self.save_hyperparameters()
-        self.normalizer = normalizer
         
-        self.lr = lr
-        self.weight_decay = weight_decay
         self.task = task
-        self.segment = segment
-        self.segment_length = segment_length
+        self.segment_length = 45 if task == 'pose' else 90
         
-        self.model = VQVAE(h_dim, 
-                           res_h_dim, 
-                           n_res_layers,
-                           n_embeddings,
-                           embedding_dim,
-                           beta)
+
+        self.model = VQVAE(hidden_sizes=hidden_sizes,
+                            in_dim=FEATURES[self.task],
+                            h_dim=h_dim,
+                            kernel=kernel,
+                            stride=stride,
+                            res_h_dim=res_h_dim,
+                            n_res_layers=n_res_layers,
+                            n_embeddings=n_embeddings,
+                            embedding_dim=embedding_dim,
+                            segment_length=self.segment_length,
+                            beta=beta)
 
     
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), 
-                                     lr=self.lr, 
-                                     weight_decay=self.weight_decay)
-
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer,
-                                                                            T_0=5,
-                                                                            T_mult=2, 
-                                                                            eta_min=1e-6)
-        return [optimizer], [scheduler]
-
     def forward(self, batch):
         task = self.normalizer.minmax_normalize(batch[self.task], self.task)
         
         bz = task.size(0)
-        task_reshaped = task.view(bz, 3, self.segment, self.segment_length, -1)
-        task_reshaped = task_reshaped.view(bz*3*self.segment, self.segment_length, -1)
-        x = task_reshaped.view(bz*3*self.segment, self.segment_length, -1, 2). permute(0, 3, 1, 2)
-        embedding_loss, x_hat = self.model(x)
-        x_hat = x_hat.permute(0, 2, 3, 1).contiguous().view(bz, 3, self.segment*self.segment_length, -1)
+        task_reshaped = task.view(bz, 3, self.segment, self.segment_length, -1).view(bz*3*self.segment, self.segment_length, -1)
+        #x = task_reshaped.view(bz*3*self.segment, self.segment_length, -1, 2). permute(0, 3, 1, 2)
+        embedding_loss, x_hat, perplexity = self.model(task_reshaped) # 
+        x_hat = x_hat.view(bz, 3, self.segment*self.segment_length, -1)
+        #x_hat = x_hat.view(bz, 3, self.segment*self.segment_length, -1)
         
-        return task, x_hat, embedding_loss
+        return task, x_hat, embedding_loss, perplexity
 
     def training_step(self, batch, batch_idx):
-        y, y_hat, embedding_loss = self(batch)
+        y, y_hat, embedding_loss, perplexity = self(batch)
         loss = F.mse_loss(y_hat, y, reduction='mean') + embedding_loss
         self.log('train_loss', loss, on_epoch=True, sync_dist=True)
+        self.log('perplexity', perplexity, on_epoch=True, sync_dist=True)
         return loss
 
 
     def validation_step(self, batch, batch_idx):
-        y, y_hat, _ = self(batch)
+        y, y_hat, _, _ = self(batch)
         loss = F.mse_loss(y_hat, y, reduction='mean')
         self.log('val_loss', loss, on_epoch=True, sync_dist=True)
         return loss
 
 
-class MaskTransformer_Module(LightningModule):
-
+class MaskTransformer_Module(Base_Module):
     def __init__(
             self,
             hidden_size,
@@ -171,24 +171,22 @@ class MaskTransformer_Module(LightningModule):
             frozen,
             pretrained,
             feature_filling,
-            lr,
-            weight_decay,
             alpha, 
             normalizer,
+            lr,
+            weight_decay,
             feature_mask=[1,1,1,1,1,1],
             **kwargs
     ):
-        super().__init__()
+        super(MaskTransformer_Module, self).__init__(segment, normalizer, lr, weight_decay)
         self.save_hyperparameters()
 
         self.hidden_size = hidden_size
         self.frozen = frozen
-        self.segment = segment
 
         self.feature_mask = torch.Tensor(feature_mask) if type(feature_mask) == list else torch.Tensor(FEATURE_MASK_DICT[feature_mask])
 
-        self.model = MaskTransformer(normalizer=normalizer,
-                                    hidden_size=hidden_size,
+        self.model = MaskTransformer(hidden_size=hidden_size,
                                     segment=segment,
                                     frozen=frozen,
                                     pretrained=pretrained,
@@ -196,25 +194,12 @@ class MaskTransformer_Module(LightningModule):
                                     feature_mask=self.feature_mask,
                                     **kwargs)
 
-        self.lr = lr
-        self.weight_decay = weight_decay
         self.alpha = alpha
-        
-    
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), 
-                                     lr=self.lr, 
-                                     weight_decay=self.weight_decay)
-
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer,
-                                                                            T_0=5,
-                                                                            T_mult=2, 
-                                                                            eta_min=1e-6)
-        return [optimizer], [scheduler]
     
         
     def forward(self, batch):
+        for task in self.model.task_list[:-3]:
+            batch[task] = self.normalizer.minmax_normalize(batch[task], task)
         return self.model(batch)
 
     def calculate_loss(self, y, y_hat, task, training):
@@ -269,59 +254,4 @@ class MaskTransformer_Module(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         return self.step(batch, 'val_loss', training=False)
-
-    # def on_test_start(self):
-    #     result_dir = f"./{self.root_dir}/{self.feature_mask}/{self.experiment_name}"
-        
-    #     for i in self.task_list[:-3]:
-    #         os.makedirs(f'{result_dir}/{i}', exist_ok=True)
-        
-    #     self.result_dir = result_dir
-
-    #     self.visualize_idx = torch.randint(low=0, high=self.trainer.num_test_batches[0], size=(1,)).item()
-    #     self.classification_metrics = {'speaker': 
-    #                                 {'accuracy': Accuracy(task="binary").to(self.device), 
-    #                                 'precision': Precision(task="binary", average='weighted').to(self.device), 
-    #                                 'recall': Recall(task="binary", average='weighted').to(self.device), 
-    #                                 'f1': F1Score(task="binary", average='weighted').to(self.device)}, 
-    #                                 'bite': 
-    #                                 {'accuracy': Accuracy(task="binary").to(self.device), 
-    #                                 'precision': Precision(task="binary", average='weighted').to(self.device), 
-    #                                 'recall': Recall(task="binary", average='weighted').to(self.device), 
-    #                                 'f1': F1Score(task="binary", average='weighted').to(self.device)}}
-        
-        
-    # def test_step(self, batch, batch_idx):
-    #     y, y_hat = self.forward(batch)
-    #     for task_idx, task in enumerate(self.task_list[:-3]):
-    #         if self.feature_mask_exclude_word[task_idx]:
-    #             current_y = y[task_idx]
-    #             current_y_hat = y_hat[task_idx]
-    #             current_loss = F.mse_loss(current_y_hat, current_y, reduction='mean')
-                
-    #             self.log(f'test_loss/{task}', current_loss, on_epoch=True, sync_dist=True)
-                
-    #             #visualize one batch
-    #             if batch_idx == self.visualize_idx:
-    #                 file_name = f'{self.result_dir}/{task}/{batch_idx}'
-    #                 visualize(task, self.normalizer, current_y, current_y_hat, file_name)
-        
-    #     for task_idx, task in enumerate(self.task_list[-2:]):
-    #         if self.feature_mask_exclude_word[task_idx - 2]:
-    #             for metric in self.classification_metrics[task].values():
-    #                 metric.update(y_hat[task_idx-2], y[task_idx-2])
-
-
-    # def on_test_epoch_end(self):
-    #     for task_idx, task in enumerate(self.task_list[:-3]):
-    #         if self.feature_mask_exclude_word[task_idx]:
-    #             fps = 15 if task == 'pose' else 30
-    #             for filename in os.listdir(f'{self.result_dir}/{task}'):
-    #                 self.logger.experiment.log({f'video/{task}': wandb.Video(os.path.join(f'{self.result_dir}/{task}', filename), 
-    #                                                                             fps=fps, 
-    #                                                                             format="mp4")})
-    #     for task_idx, task in enumerate(self.task_list[-2:]):
-    #         if self.feature_mask_exclude_word[task_idx - 2]:
-    #             for metric_name, metric in self.classification_metrics[task].items():
-    #                 self.log(f'test/{task}/{metric_name}', metric.compute(), sync_dist=True)
 

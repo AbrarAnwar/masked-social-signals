@@ -14,35 +14,42 @@ from utils.dataset import get_loaders
 from utils.normalize import Normalizer
 from utils.utils import get_search_hparams, get_experiment_name
 
+ENTITY = 'tangyiming'
+PROJECT = 'masked-social-signals'
+
 
 
 def get_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--model", type=str)
-    parser.add_argument("--sweep_name", type=str)
+    parser.add_argument("--sweep", type=str)
+    parser.add_argument("--feature_mask", type=str, default='multi')
 
     return parser.parse_args()
 
 
 
 def main():
-    wandb.init(entity='tangyiming', project="masked-social-signals")
-    wandb_logger = WandbLogger(entity='tangyiming', project="masked-social-signals")
+    wandb.init(entity=ENTITY, project=PROJECT)
+    wandb_logger = WandbLogger(entity=ENTITY, project=PROJECT)
     hparams = wandb.config
     seed_everything(hparams.seed)
-
+    
     # load data
-    train_loader, val_loader, test_loader = get_loaders(batch_path='/home/tangyimi/masked-social-signals/dining_dataset/batch_window36_stride18_v4', 
-                                                           validation_idx=30, 
-                                                           batch_size=hparams.batch_size, 
-                                                           num_workers=2)
+    train_loader, val_loader, test_loader = get_loaders(batch_path='./dining_dataset/batch_window36_stride18_v4', 
+                                                        test_idx=hparams.test_idx, 
+                                                        batch_size=hparams.batch_size, 
+                                                        num_workers=2)
     
     # normalize data
-    #normalizer = Normalizer(train_loader)
+    if 'test' in args.sweep:
+        # testing code
+        normalizer = pickle.load(open('normalizer.pkl', 'rb'))
+    else:
+        normalizer = Normalizer(train_loader)
 
-    # for test
-    normalizer = pickle.load(open('normalizer.pkl', 'rb'))
+    
     name = get_experiment_name(search_hparams, hparams)
 
     if args.model == 'autoencoder':
@@ -54,9 +61,13 @@ def main():
                             alpha=hparams.alpha,
                             lr=hparams.lr,
                             weight_decay=hparams.weight_decay)
+        sub_folder = hparams.task
     elif args.model == 'vqvae':
         module = VQVAE_Module(normalizer=normalizer,
+                            hidden_sizes=hparams.hidden_sizes,
                             h_dim=hparams.h_dim,
+                            kernel=hparams.kernel,
+                            stride=hparams.stride,
                             res_h_dim=hparams.res_h_dim,
                             n_res_layers=hparams.n_res_layers,
                             n_embeddings=hparams.n_embeddings,
@@ -65,9 +76,10 @@ def main():
                             lr=hparams.lr,
                             weight_decay=hparams.weight_decay,
                             task=hparams.task,
-                            segment=hparams.segment,
-                            segment_length=hparams.segment_length)
+                            segment=hparams.segment)
+        sub_folder = hparams.task
     elif args.model == 'masktransformer':
+        print('Feature mask:', args.feature_mask)
         module = MaskTransformer_Module(normalizer=normalizer,
                             hidden_size=hparams.hidden_size,
                             segment=hparams.segment,
@@ -77,7 +89,7 @@ def main():
                             lr=hparams.lr,
                             weight_decay=hparams.weight_decay,
                             alpha=hparams.alpha,
-                            feature_mask=hparams.feature_mask,
+                            feature_mask=args.feature_mask,
                             n_layer=hparams.n_layer,
                             n_head=hparams.n_head,
                             n_inner=hparams.hidden_size*4,
@@ -86,10 +98,11 @@ def main():
                             resid_pdrop=hparams.resid_pdrop,
                             attn_pdrop=hparams.attn_pdrop,
                             n_bundle=hparams.n_bundle)
+        sub_folder = args.feature_mask
     else:
         raise NotImplementedError('model not supported')
 
-    checkpoint_path = f'./{hparams.ckpt}/{name}'
+    checkpoint_path = f'./{hparams.ckpt}/{sub_folder}/{name}'
     experiment_name = f'{name}'
 
     wandb_logger.experiment.name = experiment_name
@@ -101,7 +114,7 @@ def main():
         monitor='val_loss',
         mode='min',
         dirpath=checkpoint_path,
-        filename='best-epoch{epoch}-val_loss{val_loss:.4f}',
+        filename='{epoch}-{val_loss:.4f}',
         save_top_k=1,
     )
     
@@ -125,12 +138,12 @@ if __name__ == '__main__':
     
     search_hparams = get_search_hparams(sweep_config) # for experiment name
     
-    if args.sweep_name:
-        sweep_config['name'] = args.sweep_name
+    if args.sweep:
+        sweep_config['name'] = args.sweep
 
-    sweep_id = wandb.sweep(sweep=sweep_config, entity='tangyiming', project="masked-social-signals")
+    sweep_id = wandb.sweep(sweep=sweep_config, entity=ENTITY, project=PROJECT)
 
-    wandb.agent(sweep_id, function=main, entity='tangyiming', project="masked-social-signals")
+    wandb.agent(sweep_id, function=main, entity=ENTITY, project=PROJECT)
     
 
         

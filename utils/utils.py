@@ -40,6 +40,6 @@ def get_search_hparams(config):
 
 def get_experiment_name(search_hparams, hparams):
     if search_hparams:
-        return '_'.join([f'{k}={v}' for k,v in hparams.items() if k in search_hparams])
+        return hparams['model'] + '_'.join([f'{k}={v}' for k,v in hparams.items() if k in search_hparams])
     return f"default_{hparams['model']}"
 
