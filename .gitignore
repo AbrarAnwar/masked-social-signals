@@ -10,3 +10,4 @@ lightning_logs/
 slurm*
 dining_dataset/
 normalizer.pkl
+metrics/

@@ -55,7 +55,6 @@ def main():
         metrics = evaluate(args.module_path, test_loader)
         if args.metric_dir:
             save_metrics(metrics, args)
-    
     elif args.job == 'visualize':
         make_video(module_path=args.module_path, 
                 result_dir=args.result_dir, 
