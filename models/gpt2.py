@@ -125,15 +125,15 @@ class Attention(nn.Module):
         # [switch nx => n_state from Block to Attention to keep identical to TF implem]
         assert n_state % config.n_head == 0
         
-        bundle = config.n_bundle
-        assert n_ctx % bundle == 0
+        self.bundle = config.n_bundle
+        assert n_ctx % self.bundle == 0
         diy_causal_mask = torch.tril(torch.ones((n_ctx, n_ctx), dtype=torch.uint8), diagonal=-1)#.view(1, 1, n_ctx, n_ctx)
-        filter_section = torch.ones((bundle, bundle), dtype=torch.uint8) - torch.eye(bundle, dtype=torch.uint8)
-        for i in range(0, n_ctx, bundle):
-            diy_causal_mask[i:i+bundle, i:i+bundle] = filter_section
+        filter_section = torch.ones((self.bundle, self.bundle), dtype=torch.uint8) - torch.eye(self.bundle, dtype=torch.uint8)
+        for i in range(0, n_ctx, self.bundle):
+            diy_causal_mask[i:i+self.bundle, i:i+self.bundle] = filter_section
         diy_causal_mask = diy_causal_mask.view(1, 1, n_ctx, n_ctx) 
 
-
+        #import pdb; pdb.set_trace()
         self.register_buffer(
             "bias", diy_causal_mask
         )
@@ -170,6 +170,7 @@ class Attention(nn.Module):
         self.pruned_heads = self.pruned_heads.union(heads)
 
     def _attn(self, q, k, v, attention_mask=None, head_mask=None, output_attentions=False):
+        #import pdb; pdb.set_trace()
         w = torch.matmul(q, k)
         if self.scale:
             w = w / (float(v.size(-1)) ** 0.5)
@@ -177,7 +178,7 @@ class Attention(nn.Module):
 
         if not self.is_cross_attention:
             # if only "normal" attention layer implements causal mask
-            #import pdb; pdb.set_trace()
+            
             # # TODO: make sure this looks correct
             mask = self.bias[:, :, ns - nd: ns, :ns]
             w = torch.where(mask.bool(), w, self.masked_bias.to(w.dtype))
@@ -206,6 +207,7 @@ class Attention(nn.Module):
         return x.view(*new_x_shape)  # in Tensorflow implem: fct merge_states
 
     def split_heads(self, x, k=False):
+        #import pdb; pdb.set_trace()
         new_x_shape = x.size()[:-1] + (self.n_head, x.size(-1) // self.n_head)
         x = x.view(*new_x_shape)  # in Tensorflow implem: fct split_states
         if k:
@@ -324,8 +326,12 @@ class Block(nn.Module):
         )
         attn_output = attn_outputs[0]  # output_attn: a, present, (attentions)
         outputs = attn_outputs[1:]
+        # right shift the hidden_states
+        first = torch.zeros_like(hidden_states[:, :self.attn.bundle, :])
+        right_shifted = torch.cat((first, hidden_states[:, :-self.attn.bundle, :]), dim=1)
+        
         # residual connection
-        hidden_states = attn_output + hidden_states
+        hidden_states = attn_output  + right_shifted
 
         if encoder_hidden_states is not None:
             # add one self-attention block for cross-attention

@@ -7,11 +7,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from lightning import LightningModule
 
 from utils.dataset import get_loaders
-from utils.visualize import *
-from utils.embeddings import *
-from utils.normalize import *
-from utils.utils import *
-from models.autoencoder import *
+
 
 
 class LSTMModel(LightningModule):

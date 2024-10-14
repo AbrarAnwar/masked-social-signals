@@ -1,6 +1,6 @@
 from experiment.module import VQVAE_Module, AutoEncoder_Module, MaskTransformer_Module
-from utils.visualize import visualize
-from evaluation.metric import PCK, FID, W1
+from evaluation.visualize import visualize, plot
+from evaluation.metric import PCK, W1, L2
 from torchmetrics.classification import Accuracy, F1Score
 import torch, os, json
 import numpy as np
@@ -23,7 +23,6 @@ REVERSE_FEATURE_MASK = {(1, 1, 1, 1, 1, 1): 'multi',
                     (0, 0, 0, 0, 0, 1): 'bite_only'}
 
 
-
 def model_selection(module_path):
     if 'autoencoder' in module_path:
         return AutoEncoder_Module.load_from_checkpoint(module_path)
@@ -37,18 +36,22 @@ def model_selection(module_path):
 
 def print_table(metrics):
     recon_table = PrettyTable()
-    recon_table.field_names = ["Task", "FID", "W1_vel", "W1_acc", "L2", "PCK"]
+    recon_table.field_names = ["Task", "W1_vel", "W1_acc", "L2", "PCK"]
     feature_mask = metrics['feature_mask_list']
 
-    # Iterate through the metrics
-    for task_idx, task in enumerate(['gaze', 'headpose', 'pose']):
-        fid = f"{metrics['fid'][task]:.4f}" if feature_mask[task_idx] else '--'
-        w1_vel = f"{metrics['w1_vel'][task]:.4f}" if feature_mask[task_idx] else '--'
-        w1_acc = f"{metrics['w1_acc'][task]:.4f}" if feature_mask[task_idx] else '--'
-        l2 =  f"{metrics['l2'][task]:.4f}" if feature_mask[task_idx] else '--'
-        pck = f"{metrics['pck']:.4f}" if feature_mask[task_idx] and task == 'pose' else '--'
+    def format_metric(metric):
+        if isinstance(metric, dict) and 'mean' in metric and 'std' in metric:
+            return f"{metric['mean']:.4f} ± {metric['std']:.4f}"
+        return f"{metric:.4f}"
 
-        recon_table.add_row([task, fid, w1_vel, w1_acc, l2, pck])
+    for task_idx, task in enumerate(['gaze', 'headpose', 'pose']):
+        #fid = format_metric(metrics['fid'][task]) if feature_mask[task_idx] else '--'
+        w1_vel = format_metric(metrics['w1'][task][0]) if feature_mask[task_idx] else '--'
+        w1_acc = format_metric(metrics['w1'][task][1]) if feature_mask[task_idx] else '--'
+        l2 = format_metric(metrics['l2'][task]) if feature_mask[task_idx] else '--'
+        pck = format_metric(metrics['pck']) if feature_mask[task_idx] and task == 'pose' else '--'
+
+        recon_table.add_row([task, w1_vel, w1_acc, l2, pck])
 
     print(recon_table)
 
@@ -56,8 +59,8 @@ def print_table(metrics):
     class_table.field_names = ["Task", "Accuracy", "F1 Score"]
 
     for task_idx, task in enumerate(['speaker', 'bite']):
-        accuracy = f"{metrics['accuracy'][task]:.2f}" if feature_mask[task_idx-2] else '--'
-        f1 = f"{metrics['f1'][task]:.2f}" if feature_mask[task_idx-2] else '--'
+        accuracy = format_metric(metrics['accuracy'][task]) if feature_mask[task_idx-2] else '--'
+        f1 = format_metric(metrics['f1'][task]) if feature_mask[task_idx-2] else '--'
         class_table.add_row([task, accuracy, f1])
 
     print(class_table)
@@ -66,11 +69,10 @@ def print_table(metrics):
 
 def compute_metrics(metrics):
     result = dict()
-    result['pck'] = metrics['pck'].get_averages()['pck']
-    result['fid'] = {task:metrics['fids'][task].get_averages()['FID'] for task in metrics['fids']}
-    result['w1_acc'] = {task:metrics['w1s'][task].get_averages()['W1_acc'] for task in metrics['w1s']}
-    result['w1_vel'] = {task:metrics['w1s'][task].get_averages()['W1_vel'] for task in metrics['w1s']}
-    result['l2'] = {task:torch.stack(metrics['l2'][task]).mean().item() if metrics['l2'][task] else 0 for task in metrics['l2']}
+    result['pck'] = metrics['pck'].compute()
+    #result['fid'] = {task:metrics['fids'][task].get_averages()['FID'] for task in metrics['fids']}
+    result['w1'] = {task: metrics['w1s'][task].compute() for task in metrics['w1s']}
+    result['l2'] = {task: metrics['l2'][task].compute() for task in metrics['l2']}
 
     result['accuracy'] = {task:metrics['classification'][task]['accuracy'].compute().item() for task in metrics['classification']}
     result['f1'] = {task:metrics['classification'][task]['f1'].compute().item() for task in metrics['classification']}
@@ -83,14 +85,11 @@ def evaluate(module_path, dataloader):
     module = model_selection(module_path).to(device)
     tasks = module.model.task_list
     feature_mask = REVERSE_FEATURE_MASK[tuple(map(int, module.feature_mask.tolist()))]
-    
-    print(f'Evaluating on {feature_mask} FEATURE MASK')
 
     # reconstruction metric
     pck = PCK()
-    fids = {task:FID() for task in tasks}
-    w1s = {task:W1() for task in tasks}
-    l2 = {task:[] for task in tasks}
+    w1s = {task:W1() for task in ['gaze', 'headpose', 'pose']}
+    l2 = {task:L2() for task in ['gaze', 'headpose', 'pose']}
 
     # classification metric
     classification_metrics = {'speaker': 
@@ -104,9 +103,8 @@ def evaluate(module_path, dataloader):
     with torch.no_grad():
         for batch in tqdm(dataloader):
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-            ys, preds = module.forward(batch)
+            ys, preds = module.forward(batch)[:2]
 
-            # TODO
             for task_idx, task in enumerate(tasks):
                 y = ys[task_idx]
                 pred = preds[task_idx]
@@ -116,21 +114,18 @@ def evaluate(module_path, dataloader):
                         y_undo = module.normalizer.minmax_denormalize(y, task)
                         pred_undo = module.normalizer.minmax_denormalize(pred, task)
 
-                        l2[task].append(F.mse_loss(pred, y, reduction='mean').cpu())
-                        w1s[task](y_undo, pred_undo)
+                        l2[task].update(pred, y)
+                        w1s[task].update(pred_undo, y_undo)
+                        #fids[task].update(pred_undo, y_undo)
 
                         if task == 'pose':
-                            pck(y_undo, pred_undo)
-                            fids[task](y, pred)
-                        else:
-                            fids[task](y_undo, pred_undo)
-                        
+                            pck.update(pred_undo, y_undo)
                     
                     elif task in ['speaker', 'bite']:
                         classification_metrics[task]['accuracy'](pred, y)
                         classification_metrics[task]['f1'](pred, y)
 
-    metrics = compute_metrics({'pck':pck, 'fids':fids, 'w1s':w1s, 'l2':l2, 'classification':classification_metrics})
+    metrics = compute_metrics({'pck':pck, 'w1s':w1s, 'l2':l2, 'classification':classification_metrics})
     metrics['feature_mask'] = feature_mask
     metrics['feature_mask_list'] = module.feature_mask.tolist()
     print_table(metrics)
@@ -146,9 +141,20 @@ def recursive_average(dict_list):
 
         if isinstance(dict_list[0][key], dict):
             sum_dict[key] = recursive_average([d[key] for d in dict_list])
+
+        elif isinstance(dict_list[0][key], list):
+            w1_vel = [d[key][0] for d in dict_list]
+            w1_acc = [d[key][1] for d in dict_list]
+            
+            sum_dict[key] = [{'mean': np.mean(w1_vel), 'std': np.std(w1_vel)}, 
+                {'mean': np.mean(w1_acc), 'std': np.std(w1_acc)}]
+
         else:
             values = [d[key] for d in dict_list]
-            sum_dict[key] = np.mean(values)
+            sum_dict[key] = {
+                'mean': np.mean(values),
+                'std': np.std(values)
+            }
 
     return sum_dict
 
@@ -170,8 +176,21 @@ def average_metrics(root_dir):
     print_table(avg_metrics)
 
 
+def save_model(module_path, pretrain_path):
+    os.makedirs(pretrain_path, exist_ok=True)
+    if 'autoencoder' in module_path:
+        module = AutoEncoder_Module.load_from_checkpoint(module_path)
+        module.model.save(f"{pretrain_path}/autoencoder.pth")
+    elif 'vqvae' in module_path:
+        module = VQVAE_Module.load_from_checkpoint(module_path)
+        directory = f'{pretrain_path}/{module.task}'
+        os.makedirs(directory, exist_ok=True)
+        module.model.save(f"{directory}/vqvae.pth")
+    else:
+        raise NotImplementedError('module not supported')
+    
 
-def make_video(module_path, result_dir, dataloader, transformer=True):
+def make_video(module_path, result_dir, dataloader):
     module = model_selection(module_path)
 
     os.makedirs(result_dir, exist_ok=True)
@@ -187,7 +206,7 @@ def make_video(module_path, result_dir, dataloader, transformer=True):
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
             if batch_idx == visualize_idx:
                 y, y_hat = module.forward(batch)[:2]
-                if transformer:
+                if isinstance(module, MaskTransformer_Module):
                     for task_idx, task in enumerate(module.model.task_list[:-3]):
                         if module.feature_mask[task_idx]:
                             current_y = y[task_idx]
@@ -199,18 +218,36 @@ def make_video(module_path, result_dir, dataloader, transformer=True):
                             visualize(task, module.normalizer, current_y, current_y_hat, file_name)
 
                 else:
-                    file_name = f'{result_dir}/{batch_idx}'
+                    file_name = f'{result_dir}/{module.task}/{batch_idx}'
                     visualize(module.task, module.normalizer, y, y_hat, file_name)
  
 
-def save_model(module_path, pretrain_path):
-    os.makedirs(pretrain_path, exist_ok=True)
-    if 'autoencoder' in module_path:
-        module = AutoEncoder_Module.load_from_checkpoint(module_path)
-        module.model.save(f"{pretrain_path}/autoencoder.pth")
-    elif 'vqvae' in module_path:
-        module = VQVAE_Module.load_from_checkpoint(module_path)
-        module.model.save(f"{pretrain_path}/vqvae.pth")
-    else:
-        raise NotImplementedError('module not supported')
+def plot_pose_scatter(module_path, dataloader, result_dir):
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    module = model_selection(module_path).to(device)
+
+    if not module.feature_mask.tolist()[2]:
+        raise ValueError('Cannot plot scatter for no-pose model')
+
+    feature_mask = REVERSE_FEATURE_MASK[tuple(map(int, module.feature_mask.tolist()))]
+    
+    print(f'Plotting for {feature_mask} FEATURE MASK')
+
+    os.makedirs(result_dir, exist_ok=True)
+
+    module.eval()
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(tqdm(dataloader)):
+            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            _, preds = module.forward(batch)
+            
+            pose_y = module.normalizer.minmax_denormalize(batch['pose'], 'pose')
+            pose_pred = module.normalizer.minmax_denormalize(preds[2], 'pose')
+
+            random_idx = np.random.randint(0, 3)
+
+            file_name = f'{result_dir}/{batch_idx}_{1}'
+            
+            plot(pose_pred[1], pose_y[1], file_name)
+
     

@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -79,7 +78,7 @@ class VectorQuantizer(nn.Module):
 
     def forward(self, z):
         # reshape z -> (batch, height, width, channel) and flatten
-
+        #import pdb; pdb.set_trace()
         z_flattened = z.view(-1, self.e_dim)
         # distances from z to embeddings e_j (z - e)^2 = z^2 + e^2 - 2 e * z
 
@@ -88,6 +87,7 @@ class VectorQuantizer(nn.Module):
             torch.matmul(z_flattened, self.embedding.weight.t())
 
         # find closest encodings
+        #import pdb; pdb.set_trace()
         min_encoding_indices = torch.argmin(d, dim=1).unsqueeze(1)
         min_encodings = torch.zeros(
             min_encoding_indices.shape[0], self.n_e).to(z.device)
@@ -107,7 +107,10 @@ class VectorQuantizer(nn.Module):
         e_mean = torch.mean(min_encodings, dim=0)
         perplexity = torch.exp(-torch.sum(e_mean * torch.log(e_mean + 1e-10)))
 
-        return loss, z_q, perplexity #,min_encodings, min_encoding_indices
+        # distance between z and z_q
+        distance = torch.mean((z_q - z) ** 2)
+
+        return loss, z_q, perplexity, distance # min_encodings, min_encoding_indices
 
 
 
@@ -149,28 +152,29 @@ class VQVAE(nn.Module):
     def forward(self, x):
 
         embedding_loss1, z_q, _ = self.encode(x)
-        embedding_loss2, x_hat, perplexity = self.decode(z_q)
+        embedding_loss2, x_hat, perplexity, _ = self.decode(z_q)
 
         return (embedding_loss1 + embedding_loss2) / 2 , x_hat, perplexity
 
-    # TODO: modify encode and decode
+    
     def encode(self, x):
         x = x.permute(0, 2, 1).contiguous()
         z_e = self.encoder(x)
-        z_e = self.pre_quantization_conv(z_e)
-        embedding_loss, z_q, perplexity = self.vector_quantization(z_e)
+        z_e = self.pre_quantization_conv(z_e) #.permute(0, 2, 1).contiguous() 
+        embedding_loss, z_q, perplexity, _ = self.vector_quantization(z_e)
         self.hidden_shape = z_q.shape
-        z_q = z_q.flatten(start_dim=1)
+        z_q = z_q.flatten(start_dim=1) # (1152=bz*3*12, 32*90) -> (1152, 1024)
         linear_proj = self.linear_projector.encode(z_q)
         return embedding_loss, linear_proj, perplexity
 
 
-    def decode(self, z):
+    def decode(self, z): # (bz, 3, 12, 1024)
         linear_proj = self.linear_projector.decode(z)
         z_reshaped = linear_proj.view(self.hidden_shape)
-        embedding_loss, z_e, perplexity = self.vector_quantization(z_reshaped)
+        embedding_loss, z_e, perplexity, distance = self.vector_quantization(z_reshaped)
+        # z_e = z_e.permute(0, 2, 1).contiguous()
         x_hat = self.decoder(z_e).permute(0, 2, 1).contiguous()
-        return embedding_loss, x_hat, perplexity
+        return embedding_loss, x_hat, perplexity, distance
         
 
     def freeze(self):

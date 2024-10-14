@@ -11,3 +11,6 @@ slurm*
 dining_dataset/
 normalizer.pkl
 metrics/
+plots/
+distances_matrix.png
+videos/

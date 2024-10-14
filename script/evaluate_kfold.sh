@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Base directory where your checkpoints are stored
-BASE_DIR="./checkpoints/transformer_vq/kfold"
+BASE_DIR="checkpoints/v7/multi/masktransformerlr=3e-05_test_idx=30"
+MERTIC_DIR="./metrics/test"
 
 # Iterate over all subdirectories and files
 find "$BASE_DIR" -type f -name "*.ckpt" | while read -r module_path; do
@@ -22,8 +22,7 @@ find "$BASE_DIR" -type f -name "*.ckpt" | while read -r module_path; do
   
   echo "Evaluating module: $module_path with test_idx=$test_idx"
   
-  # Run the evaluation command with the additional --test_idx argument
-  python -m experiment.evaluate --module_path="$module_path" --test_idx="$test_idx" --job=evaluate --metric_dir=metrics
+  python -m evaluation.evaluate --module_path="$module_path" --test_idx="$test_idx" --job=evaluate # --metric_dir="$MERTIC_DIR"
   
   # Check if the command was successful
   if [ $? -ne 0 ]; then

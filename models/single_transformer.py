@@ -12,13 +12,9 @@ import transformers
 from lightning.pytorch.loggers import WandbLogger
 import wandb
 
-from models.autoencoder import *
+
 from models.gpt2 import GPT2Model
-from utils.dataset import *
-from utils.visualize import *
-from utils.embeddings import *
-from utils.normalize import *
-from utils.utils import *
+
 
 
 # (Return_1, state_1, action_1, Return_2, state_2, ...)

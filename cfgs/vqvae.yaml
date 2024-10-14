@@ -11,10 +11,14 @@ parameters:
       value: 'vqvae'
 
     task:
-      value: 'headpose'
+      values: ['gaze', 'headpose', 'pose']
     segment:
-      value: 12
+      value: 12 # 6 * 180 / 4 * 270 / 2 * 540
+    segment_length:
+      value: 90
 
+    test_idx:
+      value: 26
 
     hidden_sizes: 
       value: [1024]
@@ -36,9 +40,9 @@ parameters:
       value: 0.25
 
     lr: 
-      values: [5e-4, 3e-4]
+      value: 5e-4
     weight_decay: 
-      values: [1e-6, 1e-5]
+      value: 1e-6
     batch_size:
       value: 32
     strategy:
@@ -49,6 +53,6 @@ parameters:
       value: 150
 
     ckpt:
-      value: 'checkpoints/vqvae_1d'
+      value: 'checkpoints/vqvae_v2/main'
 
     

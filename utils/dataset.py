@@ -18,15 +18,13 @@ class MultiDataset(Dataset):
                     continue 
 
                 video_folder = self.path / f"{video_id:02d}"
-                if video_folder.exists():
-                    for file in video_folder.glob('*.npz'):
-                        self.files.append(file)
+                for file in video_folder.glob('*.npz'):
+                    self.files.append(file)
 
         else:
             video_folder = self.path / f"{video_number:02d}"
-            if video_folder.exists():
-                for file in video_folder.glob('*.npz'):
-                    self.files.append(file)
+            for file in video_folder.glob('*.npz'):
+                self.files.append(file)
 
 
     def __len__(self):
@@ -56,7 +54,7 @@ class MultiDataset(Dataset):
                 'bite': torch.stack(bite)}
 
             
-def get_loaders(batch_path, test_idx, batch_size, num_workers):
+def get_loaders(batch_path, test_idx, batch_size=32, num_workers=2):
     dataset = MultiDataset(batch_path, test_idx, training=True)
 
     val_size = int(0.1 * len(dataset))
@@ -79,16 +77,16 @@ def get_loaders(batch_path, test_idx, batch_size, num_workers):
 # testing
 
 if __name__ == '__main__':
-    batch_path = '/home/tangyimi/masked-social-signals/dining_dataset/batch_window36_stride18_v4'
-    test_idx = 30
+    batch_path = './dining_dataset/batch_window36_stride18_v4'
+    test_idx = 29
     batch_size = 8
     num_workers = 2
 
     train_loader, val_loader, test_loader = get_loaders(batch_path, test_idx, batch_size, num_workers)
 
-    for batch_idx, batch in enumerate(val_loader):
-        print('batch word:', batch['word'].shape)
-        break
+    # for batch_idx, batch in enumerate(val_loader):
+    #     print('batch word:', batch['word'].shape)
+    #     break
         
         
 

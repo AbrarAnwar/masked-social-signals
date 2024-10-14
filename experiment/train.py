@@ -5,7 +5,6 @@ from lightning import seed_everything
 import lightning.pytorch as pl
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
-from lightning.pytorch.strategies import DDPStrategy
 
 from models.lstm import LSTMModel
 from experiment.module import AutoEncoder_Module, VQVAE_Module, MaskTransformer_Module
@@ -25,9 +24,17 @@ def get_args():
     parser.add_argument("--model", type=str)
     parser.add_argument("--sweep", type=str)
     parser.add_argument("--feature_mask", type=str, default='multi')
+    parser.add_argument("--batch_path", type=str, default='./dining_dataset/batch_window36_stride18_v4')
+    parser.add_argument("--ablation", '-ab', action='store_true', help='one of ablation stuides that requires different pretrain vqvaes')
 
     return parser.parse_args()
 
+
+def get_pretrain_dir(pretrained, test_idx, ablation, segment, segment_length):
+    if ablation:
+        return f'./{pretrained}/ablation/{segment}_{segment_length}/{test_idx}'
+    
+    return f'./{pretrained}/main/{test_idx}'
 
 
 def main():
@@ -37,10 +44,10 @@ def main():
     seed_everything(hparams.seed)
     
     # load data
-    train_loader, val_loader, test_loader = get_loaders(batch_path='./dining_dataset/batch_window36_stride18_v4', 
-                                                        test_idx=hparams.test_idx, 
-                                                        batch_size=hparams.batch_size, 
-                                                        num_workers=2)
+    train_loader, val_loader, _ = get_loaders(batch_path=args.batch_path, 
+                                                test_idx=hparams.test_idx, 
+                                                batch_size=hparams.batch_size, 
+                                                num_workers=2)
     
     # normalize data
     if 'test' in args.sweep:
@@ -62,6 +69,8 @@ def main():
                             lr=hparams.lr,
                             weight_decay=hparams.weight_decay)
         sub_folder = hparams.task
+
+        
     elif args.model == 'vqvae':
         module = VQVAE_Module(normalizer=normalizer,
                             hidden_sizes=hparams.hidden_sizes,
@@ -76,15 +85,19 @@ def main():
                             lr=hparams.lr,
                             weight_decay=hparams.weight_decay,
                             task=hparams.task,
-                            segment=hparams.segment)
-        sub_folder = hparams.task
+                            segment=hparams.segment,
+                            segment_length=hparams.segment_length)
+        sub_folder = f'{hparams.test_idx}/{hparams.task}'
+
+
     elif args.model == 'masktransformer':
         print('Feature mask:', args.feature_mask)
         module = MaskTransformer_Module(normalizer=normalizer,
                             hidden_size=hparams.hidden_size,
                             segment=hparams.segment,
+                            segment_length=hparams.segment_length,
                             frozen=hparams.frozen,
-                            pretrained=hparams.pretrained,
+                            pretrained=get_pretrain_dir(hparams.pretrained, hparams.test_idx, args.ablation, hparams.segment, hparams.segment_length),
                             feature_filling=hparams.feature_filling,
                             lr=hparams.lr,
                             weight_decay=hparams.weight_decay,
@@ -103,9 +116,8 @@ def main():
         raise NotImplementedError('model not supported')
 
     checkpoint_path = f'./{hparams.ckpt}/{sub_folder}/{name}'
-    experiment_name = f'{name}'
 
-    wandb_logger.experiment.name = experiment_name
+    wandb_logger.experiment.name = name
     
     os.makedirs(checkpoint_path, exist_ok=True)
 
@@ -116,6 +128,7 @@ def main():
         dirpath=checkpoint_path,
         filename='{epoch}-{val_loss:.4f}',
         save_top_k=1,
+        save_last=True,
     )
     
     # training

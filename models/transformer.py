@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from lightning import LightningModule
-import lightning.pytorch as pl
 import transformers
 
 from models.autoencoder import LinearEncoder, LinearDecoder, AutoEncoder
@@ -15,6 +13,7 @@ class MaskTransformer(nn.Module):
             self,
             hidden_size,
             segment,
+            segment_length,
             frozen,
             pretrained,
             feature_filling,
@@ -24,7 +23,7 @@ class MaskTransformer(nn.Module):
         super().__init__()
         self.task_list = ['gaze', 'headpose', 'pose', 'word', 'speaker', 'bite']
         self.segment = segment
-        self.segment_length = 1080 // segment
+        self.segment_length = segment_length
         self.hidden_size = hidden_size
         self.feature_filling = feature_filling
         self.feature_mask = feature_mask
@@ -53,7 +52,10 @@ class MaskTransformer(nn.Module):
                                     segment_length=self.segment_length,
                                     beta=0.25,
                                     frozen=frozen,
-                                    pretrained='./pretrained_best/gaze/vqvae.pth')
+                                    pretrained=f'./{pretrained}/gaze/vqvae.pth')
+        self.gaze_projector = nn.Sequential(nn.Linear(hidden_size, hidden_size),
+                                            nn.ReLU(),
+                                            nn.Linear(hidden_size, hidden_size))
 
         self.headpose_vqvae = VQVAE(hidden_sizes=[hidden_size],
                                     in_dim=2,
@@ -67,7 +69,10 @@ class MaskTransformer(nn.Module):
                                     segment_length=self.segment_length,
                                     beta=0.25,
                                     frozen=frozen,
-                                    pretrained='./pretrained_best/headpose/vqvae.pth')
+                                    pretrained=f'./{pretrained}/headpose/vqvae.pth')
+        self.headpose_projector = nn.Sequential(nn.Linear(hidden_size, hidden_size),
+                                            nn.ReLU(),
+                                            nn.Linear(hidden_size, hidden_size))
 
 
         self.pose_vqvae = VQVAE(hidden_sizes=[hidden_size],
@@ -82,15 +87,18 @@ class MaskTransformer(nn.Module):
                            segment_length=self.segment_length//2,
                            beta=0.25,
                            frozen=frozen,
-                           pretrained='./pretrained_best/pose/vqvae.pth')
+                           pretrained=f'./{pretrained}/pose/vqvae.pth')
+        self.pose_projector = nn.Sequential(nn.Linear(hidden_size, hidden_size),
+                                            nn.ReLU(),
+                                            nn.Linear(hidden_size, hidden_size))
 
 
         self.word_encoder = LinearEncoder(768, [hidden_size], activation=False, frozen=frozen)
         self.speaker_embedding = nn.Embedding(2, hidden_size)
         self.bite_embedding = nn.Embedding(2, hidden_size)
         
-        self.speaker_classifier = nn.Linear(hidden_size, 1)
-        self.bite_classifier = nn.Linear(hidden_size, 1)
+        self.speaker_classifier = LinearEncoder(hidden_size, [hidden_size//2, 1], activation=False)
+        self.bite_classifier = LinearEncoder(hidden_size, [hidden_size//2, 1], activation=False)
 
         self.segment_embedding = nn.Embedding(segment, hidden_size)
 
@@ -154,22 +162,30 @@ class MaskTransformer(nn.Module):
             elif self.feature_filling == 'repeat':
                 task_output = task_output.reshape(task_output.size(0), task_output.size(1), -1, 128).mean(dim=2)
 
-        task_output_reshaped = task_output.view(self.bz*3*self.segment, -1)
+        task_output_reshaped = task_output.contiguous().view(self.bz*3*self.segment, -1)
 
         if task == 'gaze':
-            return self.gaze_vqvae.decode(task_output_reshaped)[1].view(self.bz, 3, self.segment*self.segment_length, -1)
+            task_output_reshaped = self.gaze_projector(task_output_reshaped)
+            _, x_hat, _, dist = self.gaze_vqvae.decode(task_output_reshaped)
+            return x_hat.view(self.bz, 3, self.segment*self.segment_length, -1), dist
 
         elif task == 'headpose':
-            return self.headpose_vqvae.decode(task_output_reshaped)[1].view(self.bz, 3, self.segment*self.segment_length, -1)
+            task_output_reshaped = self.headpose_projector(task_output_reshaped)
+            _, x_hat, _, dist = self.headpose_vqvae.decode(task_output_reshaped)
+            return x_hat.view(self.bz, 3, self.segment*self.segment_length, -1), dist
 
         elif task == 'pose':
-            return self.pose_vqvae.decode(task_output_reshaped)[1].view(self.bz, 3, self.segment*self.segment_length//2, -1)
+            task_output_reshaped = self.pose_projector(task_output_reshaped)
+            _, x_hat, _, dist = self.pose_vqvae.decode(task_output_reshaped)
+            return x_hat.view(self.bz, 3, self.segment*self.segment_length//2, -1), dist
 
         elif task == 'speaker':
-            return self.speaker_classifier(task_output_reshaped).view(self.bz, 3, self.segment, -1)
+            return self.speaker_classifier(task_output_reshaped).view(self.bz, 3, self.segment, -1), None
 
         elif task == 'bite':
-            return self.bite_classifier(task_output_reshaped).view(self.bz, 3, self.segment, -1)
+            return self.bite_classifier(task_output_reshaped).view(self.bz, 3, self.segment, -1), None
+
+        return None, None
 
     def padding(self, encode, task):
         if encode.size(-1) != self.hidden_size:
@@ -221,6 +237,7 @@ class MaskTransformer(nn.Module):
 
         # mask some of the inputs
         feature_mask = self.feature_mask.unsqueeze(0).unsqueeze(2).repeat(1, self.segment, self.hidden_size).expand(self.bz*3, -1, -1).to(stacked_inputs.device)
+
         stacked_inputs = stacked_inputs * feature_mask
 
         # it will make the input as (gaze_p1_t1, headpose_p1_t1, pose_p1_t1, word_p1_t1, gaze_p2_t1, headpose_p2_t1, pose_p2_t1, wordp2_t1, ...)
@@ -231,11 +248,13 @@ class MaskTransformer(nn.Module):
         output = output.view(self.bz, -1, 3, self.hidden_size).permute(0, 2, 1, 3).reshape(self.bz*3, -1, self.hidden_size) # (self.bz*3, 24, 64)
 
         y_hats = []
+        dist_loss = []
         # decode all the tasks
         for task in self.task_list:
-            y_hat = self.decode(output, task)
+            y_hat, dist = self.decode(output, task)
             y_hats.append(y_hat)
+            dist_loss.append(dist)
         
-        return ys, y_hats
+        return ys, y_hats, dist_loss
 
 

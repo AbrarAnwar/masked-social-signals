@@ -14,17 +14,19 @@ parameters:
     hidden_size: 
       value: 1024
     segment:
-      value: 12
+      value: 12  # 6 * 180 / 4 * 270 / 2 * 540
+    segment_length:
+      value: 90
     frozen:
       value: True
     
     pretrained:
-      value: True
+      value: 'pretrained'
     feature_filling:
       value: 'repeat'
 
     lr: 
-      value: 5e-4
+      values: [1e-4, 5e-5, 3e-5]
     weight_decay: 
       value: 1e-5
     alpha:
@@ -35,7 +37,7 @@ parameters:
       value: 'ddp_find_unused_parameters_true'
 
     test_idx:
-      values: [26, 27, 28, 29]
+      values: [30]
 
     
     n_layer:
@@ -57,6 +59,6 @@ parameters:
       value: 150
 
     ckpt:
-      value: 'checkpoints/transformer_vq/kfold'
+      value: 'checkpoints/v8/'
 
     

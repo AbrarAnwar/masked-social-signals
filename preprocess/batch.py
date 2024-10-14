@@ -70,7 +70,7 @@ def write_to_batch(window_size, stride_size, version, is_second=True):
 
     # create directory for batch
     target_dir = f'dining_dataset/batch_window{window_size}_stride{stride_size}_{version}/'
-    os.makedirs(target_dir)
+    os.makedirs(target_dir, exist_ok=True)
 
     for (idx, words), headpose_gaze, pose, bite in zip(read_word(), read_gazepose(), read_keypoint(), read_bite()):
         print(idx+1)
@@ -105,7 +105,6 @@ def write_to_batch(window_size, stride_size, version, is_second=True):
                 whisper[int(w['whisper_speaker']), i] = 1
             
             all_word_embedding = get_word_embeddings(all_word).cpu().numpy()
-
             for i in range(3):
                 each_person[i]['word'] = all_word_embedding[i+1]
                 each_person[i]['status_speaker'] = status[i+1]
@@ -130,8 +129,7 @@ def write_to_batch(window_size, stride_size, version, is_second=True):
             target_sub_dir = target_dir + '{:02d}/'.format(idx+1) 
             
             # make dir
-            if not os.path.exists(target_sub_dir):
-                os.makedirs(target_sub_dir)
+            os.makedirs(target_sub_dir, exist_ok=True)
 
             target_path = target_sub_dir + '{:d}.npz'.format(count)
 
@@ -145,5 +143,11 @@ def write_to_batch(window_size, stride_size, version, is_second=True):
             count += 1    
 
 if '__main__' == __name__:  
-    write_to_batch(window_size=36, stride_size=18, version='v4')
-    #write_to_batch(9, 5)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--window', type=int, default=36)
+    parser.add_argument('--stride', type=int, default=18)
+    parser.add_argument('--version', type=str, default='v4')
+    args = parser.parse_args()
+
+    write_to_batch(window_size=args.window, stride_size=args.stride, version=args.version, is_second=True)
