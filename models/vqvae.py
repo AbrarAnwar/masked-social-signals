@@ -142,7 +142,7 @@ class VQVAE(nn.Module):
         # pass continuous latent vector through discretization bottleneck
         self.vector_quantization = VectorQuantizer(
             n_embeddings, embedding_dim, beta)
-        # 32
+        # 2 * 90
         self.linear_projector = AutoEncoder(embedding_dim * segment_length, hidden_sizes)
         # decode the discrete latent representation
         self.decoder = CNNDecoder(embedding_dim, in_dim, kernel, stride, n_res_layers, res_h_dim)

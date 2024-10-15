@@ -96,6 +96,12 @@ class MaskTransformer(nn.Module):
 
         self.segment_embedding = nn.Embedding(segment, hidden_size)
 
+        self.task_embedding = nn.Embedding(len(self.task_list), hidden_size)
+
+        # TODO: positional encoding or person embedding
+        self.person_encoding = nn.Embedding(3, hidden_size)
+        
+
     def encode(self, x, task):
         if task == 'gaze':
             task_reshaped = x.view(self.bz, 3, self.segment, self.segment_length, -1).view(self.bz*3*self.segment, self.segment_length, -1)
