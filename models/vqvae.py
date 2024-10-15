@@ -79,16 +79,20 @@ class VectorQuantizer(nn.Module):
     def forward(self, z):
         # reshape z -> (batch, height, width, channel) and flatten
         #import pdb; pdb.set_trace()
+        # (1152, 32, 90) -> (1152*90, 32)
         z_flattened = z.view(-1, self.e_dim)
         # distances from z to embeddings e_j (z - e)^2 = z^2 + e^2 - 2 e * z
 
         d = torch.sum(z_flattened ** 2, dim=1, keepdim=True) + \
             torch.sum(self.embedding.weight**2, dim=1) - 2 * \
             torch.matmul(z_flattened, self.embedding.weight.t())
-
+        
+        # (1152*90, 32) => (1152*90, 512) argmax => (1152*90, 1)
+        # (1152, 1)
+        # 512 token ids
         # find closest encodings
-        #import pdb; pdb.set_trace()
-        min_encoding_indices = torch.argmin(d, dim=1).unsqueeze(1)
+        # import pdb; pdb.set_trace()
+        min_encoding_indices = torch.argmin(d, dim=1).unsqueeze(1) # (32, 3, 12, 90).flatten()
         min_encodings = torch.zeros(
             min_encoding_indices.shape[0], self.n_e).to(z.device)
         min_encodings.scatter_(1, min_encoding_indices, 1)
@@ -108,9 +112,9 @@ class VectorQuantizer(nn.Module):
         perplexity = torch.exp(-torch.sum(e_mean * torch.log(e_mean + 1e-10)))
 
         # distance between z and z_q
-        distance = torch.mean((z_q - z) ** 2)
+        #distance = torch.mean((z_q - z) ** 2)
 
-        return loss, z_q, perplexity, distance # min_encodings, min_encoding_indices
+        return loss, z_q, perplexity, min_encoding_indices#distance # min_encodings, 
 
 
 
@@ -138,7 +142,7 @@ class VQVAE(nn.Module):
         # pass continuous latent vector through discretization bottleneck
         self.vector_quantization = VectorQuantizer(
             n_embeddings, embedding_dim, beta)
-
+        # 32
         self.linear_projector = AutoEncoder(embedding_dim * segment_length, hidden_sizes)
         # decode the discrete latent representation
         self.decoder = CNNDecoder(embedding_dim, in_dim, kernel, stride, n_res_layers, res_h_dim)
@@ -161,16 +165,17 @@ class VQVAE(nn.Module):
         x = x.permute(0, 2, 1).contiguous()
         z_e = self.encoder(x)
         z_e = self.pre_quantization_conv(z_e) #.permute(0, 2, 1).contiguous() 
-        embedding_loss, z_q, perplexity, _ = self.vector_quantization(z_e)
+        embedding_loss, z_q, perplexity, min_encoding_indices = self.vector_quantization(z_e)
         self.hidden_shape = z_q.shape
         z_q = z_q.flatten(start_dim=1) # (1152=bz*3*12, 32*90) -> (1152, 1024)
         linear_proj = self.linear_projector.encode(z_q)
-        return embedding_loss, linear_proj, perplexity
+        return embedding_loss, linear_proj, perplexity, min_encoding_indices
 
 
     def decode(self, z): # (bz, 3, 12, 1024)
-        linear_proj = self.linear_projector.decode(z)
-        z_reshaped = linear_proj.view(self.hidden_shape)
+        import pdb; pdb.set_trace()
+        linear_proj = self.linear_projector.decode(z) # (1152, 32*90) => (1152, 32*90)
+        z_reshaped = linear_proj.view(self.hidden_shape) # (1152, 32, 90)
         embedding_loss, z_e, perplexity, distance = self.vector_quantization(z_reshaped)
         # z_e = z_e.permute(0, 2, 1).contiguous()
         x_hat = self.decoder(z_e).permute(0, 2, 1).contiguous()

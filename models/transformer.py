@@ -53,9 +53,7 @@ class MaskTransformer(nn.Module):
                                     beta=0.25,
                                     frozen=frozen,
                                     pretrained=f'./{pretrained}/gaze/vqvae.pth')
-        self.gaze_projector = nn.Sequential(nn.Linear(hidden_size, hidden_size),
-                                            nn.ReLU(),
-                                            nn.Linear(hidden_size, hidden_size))
+        self.gaze_projector = LinearEncoder(hidden_size, [768, hidden_size], activation=False)
 
         self.headpose_vqvae = VQVAE(hidden_sizes=[hidden_size],
                                     in_dim=2,
@@ -70,9 +68,7 @@ class MaskTransformer(nn.Module):
                                     beta=0.25,
                                     frozen=frozen,
                                     pretrained=f'./{pretrained}/headpose/vqvae.pth')
-        self.headpose_projector = nn.Sequential(nn.Linear(hidden_size, hidden_size),
-                                            nn.ReLU(),
-                                            nn.Linear(hidden_size, hidden_size))
+        self.headpose_projector = LinearEncoder(hidden_size, [768, hidden_size], activation=False)
 
 
         self.pose_vqvae = VQVAE(hidden_sizes=[hidden_size],
@@ -88,9 +84,7 @@ class MaskTransformer(nn.Module):
                            beta=0.25,
                            frozen=frozen,
                            pretrained=f'./{pretrained}/pose/vqvae.pth')
-        self.pose_projector = nn.Sequential(nn.Linear(hidden_size, hidden_size),
-                                            nn.ReLU(),
-                                            nn.Linear(hidden_size, hidden_size))
+        self.pose_projector = LinearEncoder(hidden_size, [768, hidden_size], activation=False)
 
 
         self.word_encoder = LinearEncoder(768, [hidden_size], activation=False, frozen=frozen)
@@ -106,24 +100,24 @@ class MaskTransformer(nn.Module):
         if task == 'gaze':
             task_reshaped = x.view(self.bz, 3, self.segment, self.segment_length, -1).view(self.bz*3*self.segment, self.segment_length, -1)
 
-            _, x_hat, _ = self.gaze_vqvae.encode(task_reshaped)
+            _, x_hat, _, min_encoding_indices = self.gaze_vqvae.encode(task_reshaped)
 
-            return x, x_hat.view(self.bz*3, self.segment, -1)
+            return x, x_hat.view(self.bz*3, self.segment, -1)#, min_encoding_indices
         
         elif task == 'headpose':
             task_reshaped = x.view(self.bz, 3, self.segment, self.segment_length, -1).view(self.bz*3*self.segment, self.segment_length, -1)
 
-            _, x_hat, _ = self.headpose_vqvae.encode(task_reshaped)
+            _, x_hat, _, min_encoding_indices = self.headpose_vqvae.encode(task_reshaped)
 
-            return x, x_hat.view(self.bz*3, self.segment, -1)
+            return x, x_hat.view(self.bz*3, self.segment, -1)#, min_encoding_indices
 
         elif task == 'pose':
             segment_length = self.segment_length // 2
             task_reshaped = x.view(self.bz, 3, self.segment, segment_length, -1).view(self.bz*3*self.segment, segment_length, -1)
 
-            _, x_hat, _ = self.pose_vqvae.encode(task_reshaped)
+            _, x_hat, _, min_encoding_indices = self.pose_vqvae.encode(task_reshaped)
 
-            return x, x_hat.view(self.bz*3, self.segment, -1)
+            return x, x_hat.view(self.bz*3, self.segment, -1)#, min_encoding_indices
 
         elif task == 'speaker':
             # embed speaker
@@ -161,11 +155,11 @@ class MaskTransformer(nn.Module):
                 task_output = task_output[:, :, :128]
             elif self.feature_filling == 'repeat':
                 task_output = task_output.reshape(task_output.size(0), task_output.size(1), -1, 128).mean(dim=2)
-
-        task_output_reshaped = task_output.contiguous().view(self.bz*3*self.segment, -1)
+        #import pdb; pdb.set_trace()
+        task_output_reshaped = task_output.contiguous().view(self.bz*3*self.segment, -1) # (bz*3*12, 1024)
 
         if task == 'gaze':
-            task_output_reshaped = self.gaze_projector(task_output_reshaped)
+            task_output_reshaped = self.gaze_projector(task_output_reshaped) # (bz*3*12, 1024) -> (bz*3*12, 512)
             _, x_hat, _, dist = self.gaze_vqvae.decode(task_output_reshaped)
             return x_hat.view(self.bz, 3, self.segment*self.segment_length, -1), dist
 
