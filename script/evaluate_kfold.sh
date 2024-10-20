@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_DIR="checkpoints/v7/multi/masktransformerlr=3e-05_test_idx=30"
+BASE_DIR="checkpoints/v9/multi/masktransformerlr=5e-06_test_idx=30_weight_decay=1e-05"
 MERTIC_DIR="./metrics/test"
 
 # Iterate over all subdirectories and files
