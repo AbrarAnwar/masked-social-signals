@@ -177,9 +177,10 @@ def average_metrics(root_dir):
 
 
 def save_model(module_path, pretrain_path):
-    os.makedirs(pretrain_path, exist_ok=True)
+    
     if 'autoencoder' in module_path:
         module = AutoEncoder_Module.load_from_checkpoint(module_path)
+        os.makedirs(pretrain_path, exist_ok=True)
         module.model.save(f"{pretrain_path}/autoencoder.pth")
     elif 'vqvae' in module_path:
         module = VQVAE_Module.load_from_checkpoint(module_path)

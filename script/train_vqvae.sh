@@ -4,10 +4,10 @@
 #SBATCH --gres=gpu:a6000:1
 #SBATCH --nodelist=dill-sage
 #SBATCH --time=4000
-#SBATCH --output=/home/tangyimi/masked-social-signals/slurm_output/vqvae/26idx_%j.out
-#SBATCH --job-name=vq26idx
+#SBATCH --output=/home/tangyimi/masked-social-signals/slurm_output/vqvae/42vq_%j.out
+#SBATCH --job-name=vqvae_42
 
 # python -m experiment.train --model=vqvae --sweep=vqvae_29 --test_idx=29 &
 # python -m experiment.train --model=vqvae --sweep=vqvae_28 --test_idx=28 &
 
-python -m experiment.train --model=vqvae --sweep=vqvae_v2
+python -m experiment.train --model=vqvae --sweep=vqvae_42

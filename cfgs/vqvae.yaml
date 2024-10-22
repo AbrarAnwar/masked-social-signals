@@ -11,23 +11,23 @@ parameters:
       value: 'vqvae'
 
     task:
-      values: ['gaze', 'headpose', 'pose']
+      values: ['gaze', 'headpose','pose']
     segment:
       value: 12 # 6 * 180 / 4 * 270 / 2 * 540
     segment_length:
       value: 90
 
     test_idx:
-      value: 26
+      value: 30
 
     hidden_sizes: 
       value: [1024]
     h_dim:
       value: 128
     kernel:
-      value: 3
+      value: 4
     stride:
-      value: 1
+      value: 2
     res_h_dim:
       value: 32
     n_res_layers:
@@ -53,6 +53,6 @@ parameters:
       value: 150
 
     ckpt:
-      value: 'checkpoints/vqvae_v2/main'
+      value: 'checkpoints/vqvae_42/main'
 
     

@@ -141,7 +141,7 @@ class VQVAE_Module(Base_Module):
         task = self.normalizer.minmax_normalize(batch[self.task], self.task)
         
         bz = task.size(0)
-        task_reshaped = task.view(bz, 3, self.segment, self.segment_length, -1).view(bz*3*self.segment, self.segment_length, -1)
+        task_reshaped = task.view(bz*3*self.segment, self.segment_length, -1)
         #x = task_reshaped.view(bz*3*self.segment, self.segment_length, -1, 2). permute(0, 3, 1, 2)
         embedding_loss, x_hat, perplexity = self.model(task_reshaped) # 
         x_hat = x_hat.view(bz, 3, self.segment*self.segment_length, -1)
@@ -206,65 +206,33 @@ class MaskTransformer_Module(Base_Module):
         for task in self.model.task_list[:-3]:
             batch[task] = self.normalizer.minmax_normalize(batch[task], task)
         return self.model(batch)
-
-    def calculate_loss(self, y, y_hat, dist_loss, task, training):
+    
+    def calculate_loss(self, y, y_hat, task):
         task_idx = self.model.task_list.index(task)
         if self.feature_mask[task_idx]:
             if task in ['gaze', 'headpose', 'pose']:
                 current_y, current_y_hat = y[task_idx], y_hat[task_idx]
-
-                # reconstruction loss
+                
+                if self.training:
+                    ce_loss = F.cross_entropy(current_y_hat, current_y)
+                    return ce_loss
+                
                 reconstruct_loss = F.mse_loss(current_y_hat, current_y, reduction='mean')
-
-                if not training:
-                    return reconstruct_loss
-
-                # velocity loss
-                y_vel = current_y[:, :, 1:, :] - current_y[:, :, :-1, :]
-                y_hat_vel = current_y_hat[:, :, 1:, :] - current_y_hat[:, :, :-1, :]
-                velocity = F.mse_loss(y_hat_vel, y_vel, reduction='mean')
-
-                # segment loss 
-                # segment_length = current_y.size(2) // self.segment
-
-                # y_segment_delta = current_y[:, :, segment_length-1:-1:segment_length, :] - current_y[:, :, segment_length::segment_length, :]
-                # y_hat_segment_delta = current_y_hat[:, :, segment_length-1:-1:segment_length, :] - current_y_hat[:, :, segment_length::segment_length, :]
-                # segment_loss = F.mse_loss(y_hat_segment_delta, y_segment_delta, reduction='mean')
-
-                task_loss = reconstruct_loss + velocity #+ self.alpha * segment_loss
-                return task_loss
+                return reconstruct_loss
 
             elif task in ['speaker', 'bite']:
                 weights = self.weights[task]
                 weights_matrix = torch.where(y[task_idx] == 0, weights[0], weights[1])
                 classification_loss = F.binary_cross_entropy_with_logits(y_hat[task_idx], y[task_idx], weight=weights_matrix)
                 return classification_loss
-
-    # def calculate_loss(self, y, y_hat, dist_loss, task, training):  
-    #     task_idx = self.model.task_list.index(task)
-    #     if self.feature_mask[task_idx]:
-    #         if task in ['gaze', 'headpose', 'pose']:
-    #             current_y, current_y_hat, current_dist = y[task_idx], y_hat[task_idx], dist_loss[task_idx]
-    #             reconstruct_loss = F.mse_loss(current_y_hat, current_y, reduction='mean')
-
-    #             if not training:
-    #                 return reconstruct_loss
-                
-    #             return current_dist #+ reconstruct_loss
-
-    #         elif task in ['speaker', 'bite']:
-    #             weights = self.weights[task]
-    #             weights_matrix = torch.where(y[task_idx] == 0, weights[0], weights[1])
-    #             classification_loss = F.binary_cross_entropy_with_logits(y_hat[task_idx], y[task_idx], weight=weights_matrix)
-    #             return classification_loss     
+            
         
-    def step(self, batch, loss_name, training):
-        y, y_hat, dist_loss = self(batch)
+    def step(self, batch, loss_name):
+        y, y_hat = self(batch)
         losses = []
 
         for task in self.model.task_list:
-            
-            task_loss = self.calculate_loss(y, y_hat, dist_loss, task, training)
+            task_loss = self.calculate_loss(y, y_hat, task)
             if task_loss:
                 self.log(f'{loss_name}/{task}', task_loss, on_epoch=True, sync_dist=True)
                 losses.append(task_loss)
@@ -276,8 +244,8 @@ class MaskTransformer_Module(Base_Module):
         return loss
     
     def training_step(self, batch, batch_idx):
-        return self.step(batch, 'train_loss', training=True)
+        return self.step(batch, 'train_loss')
 
     def validation_step(self, batch, batch_idx):
-        return self.step(batch, 'val_loss', training=False)
+        return self.step(batch, 'val_loss')
 
