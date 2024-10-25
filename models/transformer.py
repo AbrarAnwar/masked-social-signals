@@ -22,8 +22,8 @@ class CyclicPositionalEncoding(nn.Module):
         div_term_people = torch.arange(0, d_model, 2) * (2 * math.pi / d_model)  # Different scaling factor for periodicity
 
         # Apply sine for even indices and cosine for odd indices
-        person_encoding[:, 0::2] = torch.sin(angle * div_term_people)  # Sinusoidal encoding for cyclic positions
-        person_encoding[:, 1::2] = torch.cos(angle * div_term_people)  # Cosine encoding for cyclic positions
+        person_encoding[:, 0::2] = torch.sin(angle * div_term_people) 
+        person_encoding[:, 1::2] = torch.cos(angle * div_term_people)  
 
         self.register_buffer('person_encoding', person_encoding)
         self.register_buffer('original_person_encoding', person_encoding.clone())
@@ -80,8 +80,10 @@ class MaskTransformer(nn.Module):
                                     beta=0.25,
                                     frozen=frozen,
                                     pretrained=f'./{pretrained}/gaze/vqvae.pth')
-        self.gaze_projector = LinearNet([hidden_size]*3, activation=False)
-        self.gaze_classifier = LinearNet([32, 256, 512], activation=False)
+        #self.gaze_projector = LinearNet([hidden_size]*3, activation=False)
+        #self.gaze_classifier = LinearNet([32, 256, 512], activation=False)
+        self.gaze_lstm = nn.LSTM(input_size=32, hidden_size=64, num_layers=2, proj_size=16,
+                                 batch_first=True, bidirectional=True)
 
         self.headpose_vqvae = VQVAE(hidden_sizes=[hidden_size],
                                     in_dim=2,
@@ -96,9 +98,10 @@ class MaskTransformer(nn.Module):
                                     beta=0.25,
                                     frozen=frozen,
                                     pretrained=f'./{pretrained}/headpose/vqvae.pth')
-        self.headpose_projector = LinearNet([hidden_size]*3, activation=False)
-        self.headpose_classifier = LinearNet([32, 256, 512], activation=False)
-
+        #self.headpose_projector = LinearNet([hidden_size]*3, activation=False)
+        #self.headpose_classifier = LinearNet([32, 256, 512], activation=False)
+        self.headpose_lstm = nn.LSTM(input_size=32, hidden_size=64, num_layers=2, proj_size=16,
+                                     batch_first=True, bidirectional=True)
 
         self.pose_vqvae = VQVAE(hidden_sizes=[hidden_size],
                            in_dim=26,
@@ -113,10 +116,12 @@ class MaskTransformer(nn.Module):
                            beta=0.25,
                            frozen=frozen,
                            pretrained=f'./{pretrained}/pose/vqvae.pth')
-        self.pose_projector = LinearNet([hidden_size]*3, activation=False)
-        self.pose_classifier = LinearNet([32, 256, 512], activation=False)
+        #self.pose_projector = LinearNet([hidden_size]*3, activation=False)
+        #self.pose_classifier = LinearNet([32, 256, 512], activation=False)
+        self.pose_lstm = nn.LSTM(input_size=32, hidden_size=64, num_layers=2, proj_size=16,
+                                    batch_first=True, bidirectional=True)
 
-        self.word_encoder = LinearNet([768, hidden_size], activation=False, frozen=frozen)
+        self.word_encoder = LinearNet([768, hidden_size], activation=False, frozen=False)
         self.speaker_embedding = nn.Embedding(2, hidden_size)
         self.bite_embedding = nn.Embedding(2, hidden_size)
         
@@ -196,37 +201,37 @@ class MaskTransformer(nn.Module):
         task_output_reshaped = task_output.contiguous().view(self.bz*3*self.segment, -1)
 
         if task == 'gaze':
-            task_output_reshaped = self.gaze_projector(task_output_reshaped)
-            _, _, _, task_flattened = self.gaze_vqvae.decode(task_output_reshaped)
-            encoding_indices = self.gaze_classifier(task_flattened) # (self.bz*3*12, 512)
+            #task_output_reshaped = self.gaze_projector(task_output_reshaped)
+            _, x_hat, _, negative_d = self.gaze_vqvae.decode(task_output_reshaped, self.gaze_lstm)
+            #encoding_indices = self.gaze_classifier(task_flattened) # (self.bz*3*12, 512)
             
-            if not self.training:
-                _, x_hat, _, _ = self.gaze_vqvae.decode(task_output_reshaped, encoding_indices)
-                return x_hat.view(self.bz, 3, self.segment*self.segment_length, -1)
+            # if not self.training:
+            #     _, x_hat, _, _ = self.gaze_vqvae.decode(task_output_reshaped, encoding_indices)
+            #     return x_hat.view(self.bz, 3, self.segment*self.segment_length, -1)
             
-            return encoding_indices
+            return negative_d if self.training else x_hat.view(self.bz, 3, self.segment*self.segment_length, -1)
 
         elif task == 'headpose':
-            task_output_reshaped = self.headpose_projector(task_output_reshaped)
-            _, _, _, task_flattened = self.headpose_vqvae.decode(task_output_reshaped)
-            encoding_indices = self.headpose_classifier(task_flattened)
+            #task_output_reshaped = self.headpose_projector(task_output_reshaped)
+            _, x_hat, _, negative_d = self.headpose_vqvae.decode(task_output_reshaped, self.headpose_lstm)
+            #encoding_indices = self.headpose_classifier(task_flattened)
 
-            if not self.training:
-                _, x_hat, _, _ = self.headpose_vqvae.decode(task_output_reshaped, encoding_indices)
-                return x_hat.view(self.bz, 3, self.segment*self.segment_length, -1)
+            # if not self.training:
+            #     _, x_hat, _, _ = self.headpose_vqvae.decode(task_output_reshaped, encoding_indices)
+            #     return x_hat.view(self.bz, 3, self.segment*self.segment_length, -1)
             
-            return encoding_indices
+            return negative_d if self.training else x_hat.view(self.bz, 3, self.segment*self.segment_length, -1)
 
         elif task == 'pose':
-            task_output_reshaped = self.pose_projector(task_output_reshaped)
-            _, _, _, task_flattened = self.pose_vqvae.decode(task_output_reshaped)
-            encoding_indices = self.pose_classifier(task_flattened)
+            #task_output_reshaped = self.pose_projector(task_output_reshaped)
+            _, x_hat, _, negative_d = self.pose_vqvae.decode(task_output_reshaped, self.pose_lstm)
+            #encoding_indices = self.pose_classifier(task_flattened)
 
-            if not self.training:
-                _, x_hat, _, _ = self.pose_vqvae.decode(task_output_reshaped, encoding_indices)
-                return x_hat.view(self.bz, 3, self.segment*self.segment_length//2, -1)
+            # if not self.training:
+            #     _, x_hat, _, _ = self.pose_vqvae.decode(task_output_reshaped, encoding_indices)
+            #     return x_hat.view(self.bz, 3, self.segment*self.segment_length//2, -1)
 
-            return encoding_indices
+            return negative_d if self.training else x_hat.view(self.bz, 3, self.segment*self.segment_length//2, -1)
 
         elif task == 'speaker':
             return self.speaker_classifier(task_output_reshaped).view(self.bz, 3, self.segment, -1)
@@ -250,7 +255,6 @@ class MaskTransformer(nn.Module):
             return encode_padded
 
         return encode
-
 
     def add_time_embedding(self, x):
         segment_embeddings = self.segment_embedding.weight.unsqueeze(0).unsqueeze(2).unsqueeze(3).\

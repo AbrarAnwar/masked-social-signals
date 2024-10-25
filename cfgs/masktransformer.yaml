@@ -26,7 +26,7 @@ parameters:
       value: 'repeat'
 
     lr: 
-      values: [5e-6, 3e-6, 1e-6]
+      values: [3e-5, 5e-6, 3e-6]
     weight_decay: 
       value: 1e-5
     alpha:
@@ -45,7 +45,7 @@ parameters:
     n_head:
       value: 16
     activation_function: 
-      value: 'relu'
+      value: 'gelu'
     n_ctx:
       value: 216
     resid_pdrop:
@@ -59,6 +59,6 @@ parameters:
       value: 150
 
     ckpt:
-      value: 'checkpoints/v10/'
+      value: 'checkpoints/v15/' 
 
     

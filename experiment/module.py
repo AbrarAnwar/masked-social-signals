@@ -36,7 +36,8 @@ class Base_Module(LightningModule):
         self.weight_decay = weight_decay
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), 
+         # filter out the frozen parameters (pytorch can do this automatically but just to be sure)
+        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.parameters()),
                                      lr=self.lr, 
                                      weight_decay=self.weight_decay)
 
@@ -198,7 +199,10 @@ class MaskTransformer_Module(Base_Module):
                                     **kwargs)
 
         self.alpha = alpha
-        self.weights = {'speaker': [0.1, 0.3], 
+        self.loss_weights = {'gaze': 1,
+                        'headpose': 1,
+                        'pose': 1,
+                        'speaker': [0.1, 0.3], 
                         'bite': [0.1, 0.8]} # {'speaker': [0.1124, 0.314], 'bite': [0.0924, 0.793]}
     
         
@@ -207,36 +211,36 @@ class MaskTransformer_Module(Base_Module):
             batch[task] = self.normalizer.minmax_normalize(batch[task], task)
         return self.model(batch)
     
-    def calculate_loss(self, y, y_hat, task):
-        task_idx = self.model.task_list.index(task)
-        if self.feature_mask[task_idx]:
-            if task in ['gaze', 'headpose', 'pose']:
-                current_y, current_y_hat = y[task_idx], y_hat[task_idx]
-                
-                if self.training:
-                    ce_loss = F.cross_entropy(current_y_hat, current_y)
-                    return ce_loss
-                
-                reconstruct_loss = F.mse_loss(current_y_hat, current_y, reduction='mean')
-                return reconstruct_loss
+    def calculate_loss(self, y, y_hat, task_idx, task):
+        if task in ['gaze', 'headpose', 'pose']:
+            current_y, current_y_hat = y[task_idx], y_hat[task_idx]
+            
+            if self.training:
+                ce_loss = F.cross_entropy(current_y_hat, current_y)
+                return ce_loss
+            
+            reconstruct_loss = F.mse_loss(current_y_hat, current_y, reduction='mean')
+            
+            return reconstruct_loss * self.loss_weights[task]
 
-            elif task in ['speaker', 'bite']:
-                weights = self.weights[task]
-                weights_matrix = torch.where(y[task_idx] == 0, weights[0], weights[1])
-                classification_loss = F.binary_cross_entropy_with_logits(y_hat[task_idx], y[task_idx], weight=weights_matrix)
-                return classification_loss
+        elif task in ['speaker', 'bite']:
+            weights = self.loss_weights[task]
+            weights_matrix = torch.where(y[task_idx] == 0, weights[0], weights[1])
+            classification_loss = F.binary_cross_entropy_with_logits(y_hat[task_idx], y[task_idx], weight=weights_matrix)
+            return classification_loss
             
         
     def step(self, batch, loss_name):
         y, y_hat = self(batch)
         losses = []
 
-        for task in self.model.task_list:
-            task_loss = self.calculate_loss(y, y_hat, task)
-            if task_loss:
-                self.log(f'{loss_name}/{task}', task_loss, on_epoch=True, sync_dist=True)
-                losses.append(task_loss)
-
+        for task_idx, task in enumerate(self.model.task_list):
+            if self.feature_mask[task_idx]:
+                task_loss = self.calculate_loss(y, y_hat, task_idx, task)
+                if task_loss is not None:
+                    self.log(f'{loss_name}/{task}', task_loss, on_epoch=True, sync_dist=True)
+                    losses.append(task_loss)
+        
         loss = torch.stack(losses).mean()
         #loss = sum(losses)
         self.log(loss_name, loss, on_epoch=True, sync_dist=True)
