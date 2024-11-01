@@ -173,7 +173,6 @@ class MaskTransformer_Module(Base_Module):
             frozen,
             pretrained,
             feature_filling,
-            alpha, 
             normalizer,
             lr,
             weight_decay,
@@ -197,8 +196,10 @@ class MaskTransformer_Module(Base_Module):
                                     feature_mask=self.feature_mask,
                                     **kwargs)
 
-        self.alpha = alpha
-        self.weights = {'speaker': [0.1, 0.3], 
+        self.task_weights = {task: 1.0 for task in self.model.task_list \
+                             if task != 'word' and self.feature_mask[self.model.task_list.index(task)]}
+
+        self.loss_weights = {'speaker': [0.1, 0.3], 
                         'bite': [0.1, 0.8]} # {'speaker': [0.1124, 0.314], 'bite': [0.0924, 0.793]}
     
         
@@ -207,77 +208,89 @@ class MaskTransformer_Module(Base_Module):
             batch[task] = self.normalizer.minmax_normalize(batch[task], task)
         return self.model(batch)
 
-    def calculate_loss(self, y, y_hat, dist_loss, task, training):
-        task_idx = self.model.task_list.index(task)
-        if self.feature_mask[task_idx]:
-            if task in ['gaze', 'headpose', 'pose']:
-                current_y, current_y_hat = y[task_idx], y_hat[task_idx]
-
-                # reconstruction loss
-                reconstruct_loss = F.mse_loss(current_y_hat, current_y, reduction='mean')
-
-                if not training:
-                    return reconstruct_loss
-
-                # velocity loss
-                y_vel = current_y[:, :, 1:, :] - current_y[:, :, :-1, :]
-                y_hat_vel = current_y_hat[:, :, 1:, :] - current_y_hat[:, :, :-1, :]
-                velocity = F.mse_loss(y_hat_vel, y_vel, reduction='mean')
-
-                # segment loss 
-                # segment_length = current_y.size(2) // self.segment
-
-                # y_segment_delta = current_y[:, :, segment_length-1:-1:segment_length, :] - current_y[:, :, segment_length::segment_length, :]
-                # y_hat_segment_delta = current_y_hat[:, :, segment_length-1:-1:segment_length, :] - current_y_hat[:, :, segment_length::segment_length, :]
-                # segment_loss = F.mse_loss(y_hat_segment_delta, y_segment_delta, reduction='mean')
-
-                task_loss = reconstruct_loss + velocity #+ self.alpha * segment_loss
-                return task_loss
-
-            elif task in ['speaker', 'bite']:
-                weights = self.weights[task]
-                weights_matrix = torch.where(y[task_idx] == 0, weights[0], weights[1])
-                classification_loss = F.binary_cross_entropy_with_logits(y_hat[task_idx], y[task_idx], weight=weights_matrix)
-                return classification_loss
-
-    # def calculate_loss(self, y, y_hat, dist_loss, task, training):  
-    #     task_idx = self.model.task_list.index(task)
-    #     if self.feature_mask[task_idx]:
-    #         if task in ['gaze', 'headpose', 'pose']:
-    #             current_y, current_y_hat, current_dist = y[task_idx], y_hat[task_idx], dist_loss[task_idx]
-    #             reconstruct_loss = F.mse_loss(current_y_hat, current_y, reduction='mean')
-
-    #             if not training:
-    #                 return reconstruct_loss
-                
-    #             return current_dist #+ reconstruct_loss
-
-    #         elif task in ['speaker', 'bite']:
-    #             weights = self.weights[task]
-    #             weights_matrix = torch.where(y[task_idx] == 0, weights[0], weights[1])
-    #             classification_loss = F.binary_cross_entropy_with_logits(y_hat[task_idx], y[task_idx], weight=weights_matrix)
-    #             return classification_loss     
+    def calculate_loss(self, y, y_hat, task_idx, task):
+        if task == 'word':
+            return None
         
-    def step(self, batch, loss_name, training):
-        y, y_hat, dist_loss = self(batch)
-        losses = []
+        if task in ['gaze', 'headpose', 'pose']:
+            current_y, current_y_hat = y[task_idx], y_hat[task_idx]
 
-        for task in self.model.task_list:
-            
-            task_loss = self.calculate_loss(y, y_hat, dist_loss, task, training)
-            if task_loss:
-                self.log(f'{loss_name}/{task}', task_loss, on_epoch=True, sync_dist=True)
-                losses.append(task_loss)
+            # reconstruction loss
+            task_loss = F.mse_loss(current_y_hat, current_y, reduction='mean')
 
-        loss = torch.stack(losses).mean()
-        #loss = sum(losses)
-        self.log(loss_name, loss, on_epoch=True, sync_dist=True)
+            # velocity loss
+            # y_vel = current_y[:, :, 1:, :] - current_y[:, :, :-1, :]
+            # y_hat_vel = current_y_hat[:, :, 1:, :] - current_y_hat[:, :, :-1, :]
+            # velocity = F.mse_loss(y_hat_vel, y_vel, reduction='mean')
+
+            # # segment loss 
+            # segment_length = current_y.size(2) // self.segment
+
+            # y_segment_delta = current_y[:, :, segment_length-1:-1:segment_length, :] - current_y[:, :, segment_length::segment_length, :]
+            # y_hat_segment_delta = current_y_hat[:, :, segment_length-1:-1:segment_length, :] - current_y_hat[:, :, segment_length::segment_length, :]
+            # segment_loss = F.mse_loss(y_hat_segment_delta, y_segment_delta, reduction='mean')
+
+            # task_loss = reconstruct_loss + velocity 
+            # return task_loss
+
+        elif task in ['speaker', 'bite']:
+            weights = self.loss_weights[task]
+            weights_matrix = torch.where(y[task_idx] == 0, weights[0], weights[1])
+            task_loss = F.binary_cross_entropy_with_logits(y_hat[task_idx], y[task_idx], weight=weights_matrix)
         
-        return loss
+        return task_loss
+        # if self.training:
+        #     return task_loss, self.calculate_grad_norm(task_loss)
+        # return task_loss, 0
+        
+    # def calculate_grad_norm(self, task_loss):
+    #     task_loss.backward(retain_graph=True)  
+
+    #     grad_norm = torch.norm(
+    #         torch.stack([torch.norm(p.grad.detach(), 2) for p in self.model.transformer.parameters() if p.grad is not None]), 2
+    #     )
+    #     return grad_norm
+    
+    # def adjust_task_weights(self, grad_norms):
+    #     target_grad_norm = torch.tensor([1.0] * len(grad_norms))  
+
+    #     relative_grad_norms = {task: grad_norms[task] / target_grad_norm[i]
+    #                         for i, task in enumerate(grad_norms)}
+
+    #     task_weight_updates = {task: self.task_weights[task] * relative_grad_norms[task] for task in grad_norms}
+
+    #     total_weight = sum(task_weight_updates.values())
+    #     self.task_weights = {task: weight / total_weight for task, weight in task_weight_updates.items()}
+
+
+    def step(self, batch, loss_name):
+        y, y_hat = self(batch)
+        losses = dict()
+        #grad_norms = dict()
+
+        for task_idx, task in enumerate(self.model.task_list):
+            if self.feature_mask[task_idx]:
+                task_loss = self.calculate_loss(y, y_hat, task_idx, task)
+                if task_loss:
+                    self.log(f'{loss_name}/{task}', task_loss, on_epoch=True, sync_dist=True)
+                    losses[task] = task_loss
+        #             grad_norms[task] = grad_norm
+
+        # if self.training:
+        #     self.adjust_task_weights(grad_norms)
+        #     # print(self.task_weights)
+        #     total_loss = torch.stack([self.task_weights[task] * losses[task] for task in losses]).mean()
+
+        # else:
+        #     total_loss = torch.stack([losses[task] for task in losses]).mean()
+        total_loss = torch.stack([losses[task] for task in losses]).mean()
+        self.log(loss_name, total_loss, on_epoch=True, sync_dist=True)
+        
+        return total_loss
     
     def training_step(self, batch, batch_idx):
-        return self.step(batch, 'train_loss', training=True)
+        return self.step(batch, 'train_loss')
 
     def validation_step(self, batch, batch_idx):
-        return self.step(batch, 'val_loss', training=False)
+        return self.step(batch, 'val_loss')
 

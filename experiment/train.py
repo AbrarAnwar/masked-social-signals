@@ -1,4 +1,4 @@
-import os, torch, pickle, wandb, yaml, argparse
+import os, pickle, wandb, yaml, argparse
 os.environ['WANDB_SILENT'] = 'true'
 
 from lightning import seed_everything
@@ -6,16 +6,13 @@ import lightning.pytorch as pl
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 
-from models.lstm import LSTMModel
 from experiment.module import AutoEncoder_Module, VQVAE_Module, MaskTransformer_Module
-
 from utils.dataset import get_loaders
 from utils.normalize import Normalizer
 from utils.utils import get_search_hparams, get_experiment_name
 
 ENTITY = 'tangyiming'
 PROJECT = 'masked-social-signals'
-
 
 
 def get_args():
@@ -101,7 +98,6 @@ def main():
                             feature_filling=hparams.feature_filling,
                             lr=hparams.lr,
                             weight_decay=hparams.weight_decay,
-                            alpha=hparams.alpha,
                             feature_mask=args.feature_mask,
                             n_layer=hparams.n_layer,
                             n_head=hparams.n_head,
