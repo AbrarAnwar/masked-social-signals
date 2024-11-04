@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_DIR="checkpoints/v12/multi"
+BASE_DIR="checkpoints/v21"
 MERTIC_DIR="./metrics/test"
 
 # Iterate over all subdirectories and files
