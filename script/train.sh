@@ -28,7 +28,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 # torchrun --nproc_per_node=4 --master_port=$PORT3 -m experiment.train --model=masktransformer --sweep=mask_bite --feature_mask=mask_bite
 
 
-torchrun --nproc_per_node=4 --master_port=$PORT1 -m experiment.train --model=masktransformer --sweep=multi --feature_mask=multi 
+# torchrun --nproc_per_node=4 --master_port=$PORT1 -m experiment.train --model=masktransformer --sweep=multi --feature_mask=multi 
 # torchrun --nproc_per_node=4 --master_port=$PORT2 -m experiment.train --model=masktransformer --sweep=gaze_only --feature_mask=gaze_only
 # torchrun --nproc_per_node=4 --master_port=$PORT3 -m experiment.train --model=masktransformer --sweep=headpose_only --feature_mask=headpose_only 
 # torchrun --nproc_per_node=4 --master_port=$PORT1 -m experiment.train --model=masktransformer --sweep=pose_only --feature_mask=pose_only 

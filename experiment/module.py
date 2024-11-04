@@ -174,7 +174,6 @@ class MaskTransformer_Module(Base_Module):
             frozen,
             pretrained,
             feature_filling,
-            alpha, 
             normalizer,
             lr,
             weight_decay,
@@ -198,7 +197,6 @@ class MaskTransformer_Module(Base_Module):
                                     feature_mask=self.feature_mask,
                                     **kwargs)
 
-        self.alpha = alpha
         self.loss_weights = {'gaze': 1,
                         'headpose': 1,
                         'pose': 1,

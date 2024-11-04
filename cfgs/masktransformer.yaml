@@ -14,7 +14,7 @@ parameters:
     hidden_size: 
       value: 1024
     segment:
-      value: 12  # 6 * 180 / 4 * 270 / 2 * 540
+      value: 2  # 6 * 180 / 4 * 270 / 2 * 540
     segment_length:
       value: 90
     frozen:
@@ -29,8 +29,6 @@ parameters:
       values: [3e-5, 5e-6, 3e-6]
     weight_decay: 
       value: 1e-5
-    alpha:
-      value: 0
     batch_size:
       value: 32
     strategy:
@@ -59,6 +57,6 @@ parameters:
       value: 150
 
     ckpt:
-      value: 'checkpoints/v15/' 
+      value: 'checkpoints/v21/' 
 
     

@@ -101,7 +101,6 @@ def main():
                             feature_filling=hparams.feature_filling,
                             lr=hparams.lr,
                             weight_decay=hparams.weight_decay,
-                            alpha=hparams.alpha,
                             feature_mask=args.feature_mask,
                             n_layer=hparams.n_layer,
                             n_head=hparams.n_head,

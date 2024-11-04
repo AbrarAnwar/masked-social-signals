@@ -82,8 +82,8 @@ class MaskTransformer(nn.Module):
                                     pretrained=f'./{pretrained}/gaze/vqvae.pth')
         #self.gaze_projector = LinearNet([hidden_size]*3, activation=False)
         #self.gaze_classifier = LinearNet([32, 256, 512], activation=False)
-        self.gaze_lstm = nn.LSTM(input_size=32, hidden_size=64, num_layers=2, proj_size=16,
-                                 batch_first=True, bidirectional=True)
+        # self.gaze_lstm = nn.LSTM(input_size=32, hidden_size=64, num_layers=2, proj_size=16,
+        #                          batch_first=True, bidirectional=True)
 
         self.headpose_vqvae = VQVAE(hidden_sizes=[hidden_size],
                                     in_dim=2,
@@ -100,8 +100,8 @@ class MaskTransformer(nn.Module):
                                     pretrained=f'./{pretrained}/headpose/vqvae.pth')
         #self.headpose_projector = LinearNet([hidden_size]*3, activation=False)
         #self.headpose_classifier = LinearNet([32, 256, 512], activation=False)
-        self.headpose_lstm = nn.LSTM(input_size=32, hidden_size=64, num_layers=2, proj_size=16,
-                                     batch_first=True, bidirectional=True)
+        # self.headpose_lstm = nn.LSTM(input_size=32, hidden_size=64, num_layers=2, proj_size=16,
+        #                              batch_first=True, bidirectional=True)
 
         self.pose_vqvae = VQVAE(hidden_sizes=[hidden_size],
                            in_dim=26,
@@ -118,8 +118,8 @@ class MaskTransformer(nn.Module):
                            pretrained=f'./{pretrained}/pose/vqvae.pth')
         #self.pose_projector = LinearNet([hidden_size]*3, activation=False)
         #self.pose_classifier = LinearNet([32, 256, 512], activation=False)
-        self.pose_lstm = nn.LSTM(input_size=32, hidden_size=64, num_layers=2, proj_size=16,
-                                    batch_first=True, bidirectional=True)
+        # self.pose_lstm = nn.LSTM(input_size=32, hidden_size=64, num_layers=2, proj_size=16,
+        #                             batch_first=True, bidirectional=True)
 
         self.word_encoder = LinearNet([768, hidden_size], activation=False, frozen=False)
         self.speaker_embedding = nn.Embedding(2, hidden_size)
@@ -202,7 +202,7 @@ class MaskTransformer(nn.Module):
 
         if task == 'gaze':
             #task_output_reshaped = self.gaze_projector(task_output_reshaped)
-            _, x_hat, _, negative_d = self.gaze_vqvae.decode(task_output_reshaped, self.gaze_lstm)
+            _, x_hat, _, negative_d = self.gaze_vqvae.decode(task_output_reshaped) #, self.gaze_lstm)
             #encoding_indices = self.gaze_classifier(task_flattened) # (self.bz*3*12, 512)
             
             # if not self.training:
@@ -213,7 +213,7 @@ class MaskTransformer(nn.Module):
 
         elif task == 'headpose':
             #task_output_reshaped = self.headpose_projector(task_output_reshaped)
-            _, x_hat, _, negative_d = self.headpose_vqvae.decode(task_output_reshaped, self.headpose_lstm)
+            _, x_hat, _, negative_d = self.headpose_vqvae.decode(task_output_reshaped) #self.headpose_lstm)
             #encoding_indices = self.headpose_classifier(task_flattened)
 
             # if not self.training:
@@ -224,7 +224,7 @@ class MaskTransformer(nn.Module):
 
         elif task == 'pose':
             #task_output_reshaped = self.pose_projector(task_output_reshaped)
-            _, x_hat, _, negative_d = self.pose_vqvae.decode(task_output_reshaped, self.pose_lstm)
+            _, x_hat, _, negative_d = self.pose_vqvae.decode(task_output_reshaped) #self.pose_lstm)
             #encoding_indices = self.pose_classifier(task_flattened)
 
             # if not self.training:
