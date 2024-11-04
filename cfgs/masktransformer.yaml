@@ -57,6 +57,6 @@ parameters:
       value: 150
 
     ckpt:
-      value: 'checkpoints/v19/'
+      value: 'checkpoints/v22/'
 
     

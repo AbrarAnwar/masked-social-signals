@@ -2,7 +2,7 @@
 
 # SLURM SUBMIT SCRIPT
 #SBATCH --gres=gpu:a6000:4
-#SBATCH --nodelist=dill-sage
+#SBATCH --nodelist=glamor-ruby
 #SBATCH --time=4200
 #SBATCH --output=/home/tangyimi/masked-social-signals/slurm_output/ablation/2_90_%j.out
 #SBATCH --job-name=2_90

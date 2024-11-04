@@ -21,9 +21,8 @@ class CyclicPositionalEncoding(nn.Module):
         person_encoding = torch.zeros(num_people, d_model)
         div_term_people = torch.arange(0, d_model, 2) * (2 * math.pi / d_model)  # Different scaling factor for periodicity
 
-        # Apply sine for even indices and cosine for odd indices
-        person_encoding[:, 0::2] = torch.sin(angle * div_term_people)  # Sinusoidal encoding for cyclic positions
-        person_encoding[:, 1::2] = torch.cos(angle * div_term_people)  # Cosine encoding for cyclic positions
+        person_encoding[:, 0::2] = torch.sin(angle * div_term_people)  
+        person_encoding[:, 1::2] = torch.cos(angle * div_term_people)  
 
         self.register_buffer('person_encoding', person_encoding)
         self.register_buffer('original_person_encoding', person_encoding.clone())
