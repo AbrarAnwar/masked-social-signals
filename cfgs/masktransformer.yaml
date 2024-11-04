@@ -14,7 +14,7 @@ parameters:
     hidden_size: 
       value: 1024
     segment:
-      value: 12  # 6 * 180 / 4 * 270 / 2 * 540
+      value: 2  # 6 * 180 / 4 * 270 / 2 * 540
     segment_length:
       value: 90
     frozen:
