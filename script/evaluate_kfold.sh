@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_DIR="checkpoints/v21"
+BASE_DIR="checkpoints/v19"
 MERTIC_DIR="./metrics/test"
 
 # Iterate over all subdirectories and files
@@ -20,7 +20,7 @@ find "$BASE_DIR" -type f -name "*.ckpt" | while read -r module_path; do
   #   continue
   # fi
   
-  # echo "Evaluating module: $module_path with test_idx=$test_idx"
+  echo "Evaluating module: $module_path with test_idx=30"
   
   python -m evaluation.evaluate --module_path="$module_path" --test_idx=30 --job=evaluate # --metric_dir="$MERTIC_DIR"
   
