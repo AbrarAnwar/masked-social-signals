@@ -98,6 +98,7 @@ class VectorQuantizer(nn.Module):
             # soft selection
             softmax_d = F.softmax(-d, dim=1)
             z_q = torch.matmul(softmax_d, self.embedding.weight).view(z.shape)
+            perplexity = None
 
         # compute loss for embedding
         loss = torch.mean((z_q.detach()-z)**2) + self.beta * \
@@ -111,9 +112,7 @@ class VectorQuantizer(nn.Module):
             # perplexity
             e_mean = torch.mean(min_encodings, dim=0)
             perplexity = torch.exp(-torch.sum(e_mean * torch.log(e_mean + 1e-10)))
-
-        else:
-            perplexity = None
+            
 
         return loss, z_q, perplexity # min_encodings, min_encoding_indices
 
@@ -139,14 +138,14 @@ class VQVAE(BaseModel):
         # encode image into continuous latent space
         self.encoder = CNNEncoder(in_dim, h_dim, kernel, stride, n_res_layers, res_h_dim)
         self.pre_quantization_conv = nn.Conv1d(
-            h_dim, embedding_dim, kernel_size=1, stride=1)
+            h_dim, 32, kernel_size=1, stride=1)
         # pass continuous latent vector through discretization bottleneck
         self.vector_quantization = VectorQuantizer(
             n_embeddings, embedding_dim, beta)
 
-        self.linear_projector = AutoEncoder([embedding_dim * segment_length] + hidden_sizes)
+        self.linear_projector = AutoEncoder([32 * segment_length] + hidden_sizes)
         # decode the discrete latent representation
-        self.decoder = CNNDecoder(embedding_dim, in_dim, kernel, stride, n_res_layers, res_h_dim)
+        self.decoder = CNNDecoder(32, in_dim, kernel, stride, n_res_layers, res_h_dim)
 
         if pretrained:
             self.load(pretrained)
@@ -156,30 +155,31 @@ class VQVAE(BaseModel):
 
     def forward(self, x):
 
-        embedding_loss1, z_q, _ = self.encode(x)
-        embedding_loss2, x_hat, perplexity = self.decode(z_q)
+        embedding_loss, z_q, perplexity = self.encode(x)
+        x_hat = self.decode(z_q)
 
-        return (embedding_loss1 + embedding_loss2) / 2 , x_hat, perplexity
+        return embedding_loss, x_hat, perplexity
 
     
     def encode(self, x):
         x = x.permute(0, 2, 1).contiguous()
         z_e = self.encoder(x)
         z_e = self.pre_quantization_conv(z_e) #.permute(0, 2, 1).contiguous() 
-        embedding_loss, z_q, perplexity = self.vector_quantization(z_e)
-        self.hidden_shape = z_q.shape
-        z_q = z_q.flatten(start_dim=1) # (1152=bz*3*12, 32*90) -> (1152, 1024) -> transformer -> (1152, 1024)
-        linear_proj = self.linear_projector.encode(z_q)
-        return embedding_loss, linear_proj, perplexity
+        self.hidden_shape = z_e.shape
+        # import pdb; pdb.set_trace()
+        z_e_flatten = z_e.flatten(start_dim=1)
+        linear_proj = self.linear_projector.encode(z_e_flatten) # (1152, 1024)
+        # embedding_loss, z_q, perplexity = self.vector_quantization(linear_proj)
+
+        return None, linear_proj, None
 
 
     def decode(self, z, hard=True): # (bz, 3, 12, 1024)
-        linear_proj = self.linear_projector.decode(z)
-        z_reshaped = linear_proj.view(self.hidden_shape)
-        embedding_loss, z_e, perplexity = self.vector_quantization(z_reshaped, hard=hard)
-        # z_e = z_e.permute(0, 2, 1).contiguous()
+        #embedding_loss, z_e, perplexity = self.vector_quantization(z, hard=hard)
+        z_e = self.linear_projector.decode(z)
+        z_e = z_e.view(self.hidden_shape)
         x_hat = self.decoder(z_e).permute(0, 2, 1).contiguous()
-        return embedding_loss, x_hat, perplexity
+        return x_hat
         
 
     def freeze(self):

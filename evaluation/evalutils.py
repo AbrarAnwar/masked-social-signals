@@ -218,6 +218,8 @@ def make_video(module_path, result_dir, dataloader):
                             visualize(task, module.normalizer, current_y, current_y_hat, file_name)
 
                 else:
+                    os.makedirs(f'{result_dir}/{module.task}', exist_ok=True)
+                    
                     file_name = f'{result_dir}/{module.task}/{batch_idx}'
                     visualize(module.task, module.normalizer, y, y_hat, file_name)
  

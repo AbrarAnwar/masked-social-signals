@@ -18,10 +18,10 @@ parameters:
       value: 90
 
     test_idx:
-      value: 26
+      value: 30
 
     hidden_sizes: 
-      value: [1024]
+      value: [1024, 512, 256]
     h_dim:
       value: 128
     kernel:
@@ -35,9 +35,9 @@ parameters:
     n_embeddings:
       value: 512
     embedding_dim:
-      value: 32
+      value: 256
     beta:
-      value: 0.25
+      values: [0.25, 0.5, 0.75]
 
     lr: 
       value: 5e-4
@@ -53,6 +53,6 @@ parameters:
       value: 150
 
     ckpt:
-      value: 'checkpoints/vqvae_v2/main'
+      value: 'checkpoints/vqvae_1024_v6'
 
     

@@ -3,8 +3,8 @@
 #!/bin/bash
 
 # Base directory where your checkpoints are stored
-BASE_DIR="./checkpoints/transformer_v2/main/multi/masktransformertest_idx=30"
-RESULT_DIR="./videos/transformer_v2/main"
+BASE_DIR="checkpoints/vqvae_1024"
+RESULT_DIR="videos/vqvae_1024"
 
 # Iterate over all subdirectories and files
 find "$BASE_DIR" -type f -name "*.ckpt" | while read -r module_path; do
@@ -15,18 +15,18 @@ find "$BASE_DIR" -type f -name "*.ckpt" | while read -r module_path; do
   folder_name=$(basename "$dir_path")
   
   # Extract the test index from the folder name (e.g., 26 from masktransformertest_idx=26)
-  test_idx=$(echo "$folder_name" | grep -oP 'idx=\K[0-9]+')
+  # test_idx=$(echo "$folder_name" | grep -oP 'idx=\K[0-9]+')
   
-  # Check if test_idx was extracted successfully
-  if [ -z "$test_idx" ]; then
-    echo "Warning: Could not extract test_idx from folder name $folder_name. Skipping..."
-    continue
-  fi
+  # # Check if test_idx was extracted successfully
+  # if [ -z "$test_idx" ]; then
+  #   echo "Warning: Could not extract test_idx from folder name $folder_name. Skipping..."
+  #   continue
+  # fi
   
-  echo "Visualizing module: $module_path with test_idx=$test_idx"
+  echo "Visualizing module: $module_path with test_idx=30"
   
   # Run the evaluation command with the additional --test_idx argument
-  python -m evaluation.evaluate --job=visualize --module_path="$module_path" --test_idx=30 --result_dir="$RESULT_DIR/$test_idx"
+  python -m evaluation.evaluate --job=visualize --module_path="$module_path" --test_idx=30 --result_dir="$RESULT_DIR/30"
   
   # Check if the command was successful
   if [ $? -ne 0 ]; then

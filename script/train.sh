@@ -2,10 +2,10 @@
 
 # SLURM SUBMIT SCRIPT
 #SBATCH --gres=gpu:a6000:4
-#SBATCH --nodelist=lime-mint
+#SBATCH --nodelist=dill-sage
 #SBATCH --time=4200
-#SBATCH --output=/home/tangyimi/masked-social-signals/slurm_output/main/multi19_%j.out
-#SBATCH --job-name=multi19
+#SBATCH --output=/home/tangyimi/masked-social-signals/slurm_output/main/multi23_%j.out
+#SBATCH --job-name=multi23
 
 find_free_port() {
     python -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.bind(('', 0)); print(s.getsockname()[1]); s.close()"

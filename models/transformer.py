@@ -133,27 +133,27 @@ class MaskTransformer(nn.Module):
 
             _, x_hat, _ = self.gaze_vqvae.encode(task_reshaped)
             
-            ground_truth = x_hat if self.training else x
+            #ground_truth = x_hat if self.training else x
 
-            return ground_truth, x_hat.view(self.bz, 3, self.segment, -1)
+            return x, x_hat.view(self.bz, 3, self.segment, -1)
         
         elif task == 'headpose':
             task_reshaped = x.view(self.bz*3*self.segment, self.segment_length, -1)
 
             _, x_hat, _ = self.headpose_vqvae.encode(task_reshaped)
 
-            ground_truth = x_hat if self.training else x
+            #ground_truth = x_hat if self.training else x
 
-            return ground_truth, x_hat.view(self.bz, 3, self.segment, -1)
+            return x, x_hat.view(self.bz, 3, self.segment, -1)
 
         elif task == 'pose':
             task_reshaped = x.view(self.bz*3*self.segment, self.segment_length // 2, -1)
 
             _, x_hat, _ = self.pose_vqvae.encode(task_reshaped)
 
-            ground_truth = x_hat if self.training else x
+            #ground_truth = x_hat if self.training else x
 
-            return ground_truth, x_hat.view(self.bz, 3, self.segment, -1)
+            return x, x_hat.view(self.bz, 3, self.segment, -1)
 
         elif task == 'speaker':
             # if 30% of the segment is speaking, then the person is speaking 
@@ -195,23 +195,26 @@ class MaskTransformer(nn.Module):
 
         if task == 'gaze':
             #task_output_reshaped = self.gaze_projector(task_output_reshaped)
-            if self.training:
-                return task_output_reshaped
-            _, x_hat, _ = self.gaze_vqvae.decode(task_output_reshaped, hard=True)
+            # if self.training:
+            #     return task_output_reshaped
+            # _, x_hat, _ = self.gaze_vqvae.decode(task_output_reshaped, hard=True)
+            x_hat = self.gaze_vqvae.decode(task_output_reshaped)
             return x_hat.view(self.bz, 3, self.segment*self.segment_length, -1)
 
         elif task == 'headpose':
             #task_output_reshaped = self.headpose_projector(task_output_reshaped)
-            if self.training:
-                return task_output_reshaped
-            _, x_hat, _ = self.headpose_vqvae.decode(task_output_reshaped, hard=True)
+            # if self.training:
+            #     return task_output_reshaped
+            # _, x_hat, _ = self.headpose_vqvae.decode(task_output_reshaped, hard=True)
+            x_hat = self.headpose_vqvae.decode(task_output_reshaped)
             return x_hat.view(self.bz, 3, self.segment*self.segment_length, -1)
 
         elif task == 'pose':
             #task_output_reshaped = self.pose_projector(task_output_reshaped)
-            if self.training:
-                return task_output_reshaped
-            _, x_hat, _ = self.pose_vqvae.decode(task_output_reshaped, hard=True)
+            # if self.training:
+            #     return task_output_reshaped
+            # _, x_hat, _ = self.pose_vqvae.decode(task_output_reshaped, hard=True)
+            x_hat = self.pose_vqvae.decode(task_output_reshaped)
             return x_hat.view(self.bz, 3, self.segment*self.segment_length//2, -1)
 
         elif task == 'speaker':
