@@ -1,4 +1,4 @@
-from experiment.module import VQVAE_Module, AutoEncoder_Module, MaskTransformer_Module
+from experiment.module import VQVAE_Module, AutoEncoder_Module, MaskTransformer_Module, KMEANS_Module
 from evaluation.visualize import visualize, plot
 from evaluation.metric import PCK, W1, L2
 from torchmetrics.classification import Accuracy, F1Score
@@ -30,6 +30,8 @@ def model_selection(module_path):
         return VQVAE_Module.load_from_checkpoint(module_path)
     elif 'transformer' in module_path:
         return MaskTransformer_Module.load_from_checkpoint(module_path)
+    elif 'kmeans' in module_path:
+        return KMEANS_Module.load_from_checkpoint(module_path)
     else:
         raise NotImplementedError('module not supported')
 
@@ -192,7 +194,7 @@ def save_model(module_path, pretrain_path):
 
 def make_video(module_path, result_dir, dataloader):
     module = model_selection(module_path)
-
+    import pdb; pdb.set_trace()
     os.makedirs(result_dir, exist_ok=True)
     
     # random visualize index

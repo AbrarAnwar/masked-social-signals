@@ -1,0 +1,52 @@
+method: 'grid'
+name: 'vqvae'
+metric: 
+    name: 'val_loss'
+    goal: 'minimize'   
+
+parameters: 
+    seed:
+      value: 42
+    model:
+      value: 'kmeans'
+
+    task:
+      values: ['pose']
+
+    frozen:
+      value: True
+
+    segment:
+      value: 12 # 6 * 180 / 4 * 270 / 2 * 540
+    segment_length:
+      value: 90
+
+    hidden_sizes: 
+      value: [1024]
+
+    test_idx:
+      value: 30
+
+    n_clusters:
+      values: [1024, 2048]
+
+    lr: 
+      value: 5e-4
+    weight_decay: 
+      value: 1e-6
+    batch_size:
+      value: 32
+    strategy:
+      value: auto
+    
+
+    epoch:
+      value: 150
+
+    ckpt:
+      value: 'checkpoints/kmeans_v3'
+
+    comment:
+      value: 'hierarchical kmeans clustering' 
+
+    

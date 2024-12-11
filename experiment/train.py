@@ -6,7 +6,7 @@ import lightning.pytorch as pl
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 
-from experiment.module import AutoEncoder_Module, VQVAE_Module, MaskTransformer_Module
+from experiment.module import AutoEncoder_Module, VQVAE_Module, MaskTransformer_Module, KMEANS_Module
 from utils.dataset import get_loaders
 from utils.normalize import Normalizer
 from utils.utils import get_search_hparams, get_experiment_name
@@ -78,7 +78,10 @@ def main():
                             n_res_layers=hparams.n_res_layers,
                             n_embeddings=hparams.n_embeddings,
                             embedding_dim=hparams.embedding_dim,
+                            temperature=hparams.temperature,
                             beta=hparams.beta,
+                            lamb=hparams.lamb,
+                            vq_weight=hparams.vq_weight,
                             lr=hparams.lr,
                             weight_decay=hparams.weight_decay,
                             task=hparams.task,
@@ -108,6 +111,16 @@ def main():
                             attn_pdrop=hparams.attn_pdrop,
                             n_bundle=hparams.n_bundle)
         sub_folder = args.feature_mask
+
+    elif args.model == 'kmeans':
+        module = KMEANS_Module(hidden_sizes=hparams.hidden_sizes,
+                            task=hparams.task,
+                            frozen=hparams.frozen,
+                            n_clusters=hparams.n_clusters,
+                            segment=hparams.segment,
+                            segment_length=hparams.segment_length,
+                            normalizer=normalizer)
+        sub_folder = f'{hparams.test_idx}/{hparams.task}'
     else:
         raise NotImplementedError('model not supported')
 

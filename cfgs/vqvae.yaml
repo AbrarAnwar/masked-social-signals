@@ -11,17 +11,17 @@ parameters:
       value: 'vqvae'
 
     task:
-      values: ['gaze', 'headpose', 'pose']
+      values: ['pose']
     segment:
-      value: 12 # 6 * 180 / 4 * 270 / 2 * 540
+      value: 30 # 6 * 180 / 4 * 270 / 2 * 540
     segment_length:
-      value: 90
+      value: 36
 
     test_idx:
       value: 30
 
     hidden_sizes: 
-      value: [1024, 512, 256]
+      value: [1024]
     h_dim:
       value: 128
     kernel:
@@ -33,14 +33,21 @@ parameters:
     n_res_layers:
       value: 2
     n_embeddings:
-      value: 512
+      values: [512, 1024, 256]
     embedding_dim:
-      value: 256
+      value: 32 # (18, 32)
+
+    temperature:
+      values: [1, 0.5]
     beta:
-      values: [0.25, 0.5, 0.75]
+      value: 0.25
+    lamb:
+      values: [0, 0.25]
+    vq_weight:
+      value: 1
 
     lr: 
-      value: 5e-4
+      values: [5e-4, 3e-4]
     weight_decay: 
       value: 1e-6
     batch_size:
@@ -53,6 +60,9 @@ parameters:
       value: 150
 
     ckpt:
-      value: 'checkpoints/vqvae_1024_v6'
+      value: 'checkpoints/vqvae_v19'
+
+    comment:
+      value: '30 segments with 32 embeding dim and sampling on segment and grid search on lamb' 
 
     
