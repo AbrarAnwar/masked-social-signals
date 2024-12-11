@@ -186,8 +186,8 @@ class VQVAE(BaseModel):
     def freeze(self):
         freeze(self.encoder)
         freeze(self.pre_quantization_conv)
-        #self.linear_projector.freeze()
-        freeze(self.linear_projector.encoder)
+        self.linear_projector.freeze()
+        # freeze(self.linear_projector.encoder)
         freeze(self.vector_quantization.embedding)
         freeze(self.decoder)
     
