@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.cluster import MiniBatchKMeans
 import numpy as np
-
+from torchmetrics.classification import Accuracy, F1Score, Precision, Recall
 
 FEATURES = {'headpose':2, 'gaze':2, 'pose':26}
 FEATURE_MASK_DICT = {'multi': [1,1,1,1,1,1],
@@ -112,10 +112,7 @@ class VQVAE_Module(Base_Module):
                 n_res_layers,
                 n_embeddings,
                 embedding_dim,
-                temperature,
                 beta,
-                lamb,
-                vq_weight,
                 task,
                 segment,
                 segment_length,
@@ -139,34 +136,24 @@ class VQVAE_Module(Base_Module):
                             n_embeddings=n_embeddings,
                             embedding_dim=embedding_dim,
                             segment_length=self.segment_length,
-                            temperature=temperature,
-                            beta=beta,
-                            lamb=lamb,)
+                            beta=beta)
                             # frozen=True,
                             # pretrained='./pretrained2/main/30/pose/vqvae.pth')
 
-        self.vq_weight = vq_weight
+        # self.vq_weight = vq_weight
     
     def forward(self, batch):
         task = self.normalizer.minmax_normalize(batch[self.task], self.task)
         
         bz = task.size(0)
-        # OG: task_reshaped = task.view(bz, 3, self.segment, self.segment_length, -1).view(bz*3*self.segment, self.segment_length, -1)
-        #x = task_reshaped.view(bz*3*self.segment, self.segment_length, -1, 2). permute(0, 3, 1, 2)
-
-        # do sampling on this
-        if self.training:
-            task_reshaped = task.view(bz, 3, self.segment, self.segment_length, -1)[:, :, ::3, :, :].view(bz*3*self.segment//3, self.segment_length, -1)
-        else:
-            task_reshaped = task.view(bz, 3, self.segment, self.segment_length, -1).view(bz*3*self.segment, self.segment_length, -1)
+        task_reshaped = task.view(bz*3*self.segment, self.segment_length, -1)
+        # x = task_reshaped.view(bz*3*self.segment, self.segment_length, -1, 2). permute(0, 3, 1, 2)
+        
+        # task_reshaped = task.view(bz, 3, self.segment, self.segment_length, -1).view(bz*3*self.segment, self.segment_length, -1)
 
         vq_loss, x_hat, perplexity = self.model(task_reshaped) # 
 
-        if self.training:
-            x_hat = x_hat.view(bz, 3, self.segment*self.segment_length//3, -1)
-
-        else:
-            x_hat = x_hat.view(bz, 3, self.segment*self.segment_length, -1)
+        x_hat = x_hat.view(bz, 3, self.segment*self.segment_length, -1)
         
         return task, x_hat, vq_loss, perplexity
 
@@ -176,10 +163,10 @@ class VQVAE_Module(Base_Module):
         # y_vel = y[:, :, 1:, :] - y[:, :, :-1, :]
         # y_hat_vel = y_hat[:, :, 1:, :] - y_hat[:, :, :-1, :]
         # velocity_loss = F.mse_loss(y_vel, y_hat_vel, reduction='mean')
-        loss = F.mse_loss(y_hat, y, reduction='mean') + self.vq_weight * vq_loss # + velocity_loss
+        loss = F.mse_loss(y_hat, y, reduction='mean') #+ self.vq_weight * vq_loss # + velocity_loss
         # loss = vq_loss
         self.log('train_loss', loss, on_epoch=True, sync_dist=True)
-        self.log('perplexity', perplexity, on_epoch=True, sync_dist=True)
+        # self.log('perplexity', perplexity, on_epoch=True, sync_dist=True)
         return loss
 
 
@@ -225,8 +212,8 @@ class MaskTransformer_Module(Base_Module):
         self.task_weights = {task: 1.0 for task in self.model.task_list \
                              if task != 'word' and self.feature_mask[self.model.task_list.index(task)]}
 
-        self.loss_weights = {'speaker': [0.1, 0.3], 
-                        'bite': [0.1, 0.8]} # {'speaker': [0.1124, 0.314], 'bite': [0.0924, 0.793]}
+        self.loss_weights = {'speaker': [0.2, 0.6], 
+                            'bite': [0.1, 0.8]} # {'speaker': [0.1124, 0.314], 'bite': [0.0924, 0.793]}
     
         
     def forward(self, batch):
@@ -235,14 +222,14 @@ class MaskTransformer_Module(Base_Module):
         return self.model(batch)
 
     def calculate_loss(self, y, y_hat, task_idx, task):
-        if task == 'word':
-            return None
+        # if task == 'word':
+        #     return None
         
-        if task in ['gaze', 'headpose', 'pose']:
-            current_y, current_y_hat = y[task_idx], y_hat[task_idx]
+        # if task in ['gaze', 'headpose', 'pose']:
+        #     current_y, current_y_hat = y[task_idx], y_hat[task_idx]
 
-            # reconstruction loss
-            task_loss = F.mse_loss(current_y_hat, current_y, reduction='mean')
+        #     # reconstruction loss
+        #     task_loss = F.mse_loss(current_y_hat, current_y, reduction='mean')
 
             # velocity loss
             # y_vel = current_y[:, :, 1:, :] - current_y[:, :, :-1, :]
@@ -259,12 +246,13 @@ class MaskTransformer_Module(Base_Module):
             # task_loss = reconstruct_loss + velocity 
             # return task_loss
 
-        elif task in ['speaker', 'bite']:
+        if task in ['bite']:
             weights = self.loss_weights[task]
             weights_matrix = torch.where(y[task_idx] == 0, weights[0], weights[1])
             task_loss = F.binary_cross_entropy_with_logits(y_hat[task_idx], y[task_idx], weight=weights_matrix)
         
-        return task_loss
+            return task_loss
+        return None
         # if self.training:
         #     return task_loss, self.calculate_grad_norm(task_loss)
         # return task_loss, 0
@@ -290,26 +278,28 @@ class MaskTransformer_Module(Base_Module):
 
 
     def step(self, batch, loss_name):
+        # bite only loss
         y, y_hat = self(batch)
-        losses = dict()
-        #grad_norms = dict()
+        # losses = dict()
 
-        for task_idx, task in enumerate(self.model.task_list):
-            if self.feature_mask[task_idx]:
-                task_loss = self.calculate_loss(y, y_hat, task_idx, task)
-                if task_loss:
-                    self.log(f'{loss_name}/{task}', task_loss, on_epoch=True, sync_dist=True)
-                    losses[task] = task_loss
-        #             grad_norms[task] = grad_norm
+        speaker_weights = self.loss_weights['speaker']
+        speaker_weights_matrix = torch.where(y[0] == 0, speaker_weights[0], speaker_weights[1])
+        speaker_loss = F.binary_cross_entropy_with_logits(y_hat[0], y[0], weight=speaker_weights_matrix)
+        self.log(f'{loss_name}/speaker', speaker_loss, on_epoch=True, sync_dist=True)
 
-        # if self.training:
-        #     self.adjust_task_weights(grad_norms)
-        #     # print(self.task_weights)
-        #     total_loss = torch.stack([self.task_weights[task] * losses[task] for task in losses]).mean()
+        bite_weights = self.loss_weights['bite']
+        bite_weights_matrix = torch.where(y[1] == 0, bite_weights[0], bite_weights[1])
+        bite_loss = F.binary_cross_entropy_with_logits(y_hat[1], y[1], weight=bite_weights_matrix)
+        self.log(f'{loss_name}/bite', bite_loss, on_epoch=True, sync_dist=True)
+        # for task_idx, task in enumerate(self.model.task_list):
+        #     if self.feature_mask[task_idx]:
+        #         task_loss = self.calculate_loss(y, y_hat, task_idx, task)
+        #         if task_loss:
+        #             self.log(f'{loss_name}/{task}', task_loss, on_epoch=True, sync_dist=True)
+        #             losses[task] = task_loss
 
-        # else:
-        #     total_loss = torch.stack([losses[task] for task in losses]).mean()
-        total_loss = torch.stack([losses[task] for task in losses]).mean()
+        total_loss = speaker_loss * self.feature_mask[-2] + bite_loss * self.feature_mask[-1]
+        # print(f'total_loss: {total_loss}')
         self.log(loss_name, total_loss, on_epoch=True, sync_dist=True)
         
         return total_loss
@@ -317,8 +307,57 @@ class MaskTransformer_Module(Base_Module):
     def training_step(self, batch, batch_idx):
         return self.step(batch, 'train_loss')
 
+
+    def on_validation_start(self):
+        self.accuracy = {'speaker': Accuracy(task="binary").to(self.device),
+                        'bite': Accuracy(task="binary").to(self.device)}
+        
+        self.f1 = {'speaker': F1Score(task="binary", average='weighted').to(self.device),
+                    'bite': F1Score(task="binary", average='weighted').to(self.device)}
+        
+        self.precision = {'speaker': Precision(task="binary", average='weighted').to(self.device),
+                        'bite': Precision(task="binary", average='weighted').to(self.device)}
+        
+        self.recall = {'speaker': Recall(task="binary", average='weighted').to(self.device),
+                        'bite': Recall(task="binary", average='weighted').to(self.device)}
+
+
     def validation_step(self, batch, batch_idx):
-        return self.step(batch, 'val_loss')
+        self.step(batch, 'val_loss')
+        y, y_hat = self(batch)
+        self.accuracy['speaker'].update(y_hat[0], y[0])
+        self.accuracy['bite'].update(y_hat[1], y[1])
+
+        self.f1['speaker'].update(y_hat[0], y[0])
+        self.f1['bite'].update(y_hat[1], y[1])
+
+        self.precision['speaker'].update(y_hat[0], y[0])
+        self.precision['bite'].update(y_hat[1], y[1])
+
+        self.recall['speaker'].update(y_hat[0], y[0])
+        self.recall['bite'].update(y_hat[1], y[1])
+
+    def on_validation_epoch_end(self):
+
+        val_f1 = []
+        for task in self.accuracy:
+            self.log(f'accuracy/{task}', self.accuracy[task].compute(), on_epoch=True, sync_dist=True)
+
+            task_f1 = self.f1[task].compute()
+            val_f1.append(task_f1)
+            self.log(f'f1/{task}', task_f1, on_epoch=True, sync_dist=True)
+            self.log(f'precision/{task}', self.precision[task].compute(), on_epoch=True, sync_dist=True)
+            self.log(f'recall/{task}', self.recall[task].compute(), on_epoch=True, sync_dist=True)
+
+            self.accuracy[task].reset()
+            self.f1[task].reset()
+            self.precision[task].reset()
+            self.recall[task].reset()
+
+        # for monitoring purposes
+        self.log('val_f1', sum(val_f1)/len(val_f1), on_epoch=True, sync_dist=True)
+            
+
 
 
 

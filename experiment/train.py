@@ -149,9 +149,7 @@ if __name__ == '__main__':
     
     if args.sweep:
         sweep_config['name'] = args.sweep
-
     sweep_id = wandb.sweep(sweep=sweep_config, entity=ENTITY, project=PROJECT)
-
     wandb.agent(sweep_id, function=main, entity=ENTITY, project=PROJECT)
     
 

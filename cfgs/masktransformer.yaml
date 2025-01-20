@@ -1,8 +1,8 @@
 method: 'grid'
 name: 'multi'
 metric: 
-    name: 'val_loss'
-    goal: 'minimize'   
+    name: 'val_f1'
+    goal: 'maximize'   
 
 parameters: 
     seed:
@@ -14,7 +14,7 @@ parameters:
     hidden_size: 
       value: 1024
     segment:
-      value: 2  # 6 * 180 / 4 * 270 / 2 * 540
+      value: 12  # 6 * 180 / 4 * 270 / 2 * 540
     segment_length:
       value: 90
     frozen:
@@ -26,9 +26,9 @@ parameters:
       value: 'repeat'
 
     lr: 
-      values: [3e-5, 1e-5, 5e-6]
+      value: 3e-5
     weight_decay: 
-      value: 1e-5
+      value: 1e-6
     batch_size:
       value: 32
     strategy:
@@ -39,9 +39,9 @@ parameters:
 
     
     n_layer:
-      value: 24
+      value: 12 # 12
     n_head:
-      value: 16
+      value: 16 # 16
     activation_function: 
       value: 'gelu'
     n_ctx:
@@ -54,9 +54,12 @@ parameters:
       value: 18
 
     epoch:
-      value: 150
+      value: 50
 
     ckpt:
-      value: 'checkpoints/v22/'
+      value: 'checkpoints/ablation/continuous'
+
+    comment:
+      value: 'multi with continuous featurization'
 
     

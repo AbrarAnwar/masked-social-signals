@@ -18,7 +18,7 @@ parameters:
       value: 90
 
     test_idx:
-      value: 26
+      values: [30]
 
     hidden_sizes: 
       value: [1024]
@@ -46,13 +46,13 @@ parameters:
     batch_size:
       value: 32
     strategy:
-      value: 'ddp'
+      value: 'ddp_find_unused_parameters_true'
     
 
     epoch:
-      value: 150
+      value: 1
 
     ckpt:
-      value: 'checkpoints/vqvae_v2/main'
+      value: 'checkpoints/vqvae/test'
 
     

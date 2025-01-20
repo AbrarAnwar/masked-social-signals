@@ -10,7 +10,7 @@ lightning_logs/
 slurm*
 dining_dataset/
 normalizer.pkl
-metrics/
+metrics*
 plots/
 distances_matrix.png
 videos/

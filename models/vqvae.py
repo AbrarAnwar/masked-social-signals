@@ -139,14 +139,14 @@ class VQVAE(BaseModel):
         # encode image into continuous latent space
         self.encoder = CNNEncoder(in_dim, h_dim, kernel, stride, n_res_layers, res_h_dim)
         self.pre_quantization_conv = nn.Conv1d(
-            h_dim, embedding_dim, kernel_size=1, stride=1)
+            h_dim, 32, kernel_size=1, stride=1)
         # pass continuous latent vector through discretization bottleneck
         self.vector_quantization = VectorQuantizer(
             n_embeddings, embedding_dim, beta)
 
-        self.linear_projector = AutoEncoder([embedding_dim * segment_length] + hidden_sizes)
+        self.linear_projector = AutoEncoder([32 * segment_length] + hidden_sizes)
         # decode the discrete latent representation
-        self.decoder = CNNDecoder(embedding_dim, in_dim, kernel, stride, n_res_layers, res_h_dim)
+        self.decoder = CNNDecoder(32, in_dim, kernel, stride, n_res_layers, res_h_dim)
 
         if pretrained:
             self.load(pretrained)
@@ -166,10 +166,14 @@ class VQVAE(BaseModel):
         x = x.permute(0, 2, 1).contiguous()
         z_e = self.encoder(x)
         z_e = self.pre_quantization_conv(z_e) #.permute(0, 2, 1).contiguous() 
+
+        # TODO: modify encode
         embedding_loss, z_q, perplexity = self.vector_quantization(z_e)
         self.hidden_shape = z_q.shape
+
         z_q = z_q.flatten(start_dim=1) # (1152=bz*3*12, 32*90) -> (1152, 1024) -> transformer -> (1152, 1024)
         linear_proj = self.linear_projector.encode(z_q)
+
         return embedding_loss, linear_proj, perplexity
 
 
@@ -177,7 +181,7 @@ class VQVAE(BaseModel):
         linear_proj = self.linear_projector.decode(z)
         z_reshaped = linear_proj.view(self.hidden_shape)
         embedding_loss, z_e, perplexity = self.vector_quantization(z_reshaped, hard=hard)
-        # z_e = z_e.permute(0, 2, 1).contiguous()
+        # import pdb; pdb.set_trace()
         x_hat = self.decoder(z_e).permute(0, 2, 1).contiguous()
         return embedding_loss, x_hat, perplexity
         
