@@ -1,7 +1,7 @@
 from experiment.module import VQVAE_Module, AutoEncoder_Module, MaskTransformer_Module
 from evaluation.visualize import visualize, plot
 from evaluation.metric import PCK, W1, L2
-from torchmetrics.classification import Accuracy, F1Score
+from torchmetrics.classification import Accuracy, F1Score, Precision, Recall, MatthewsCorrCoef
 import torch, os, json
 import numpy as np
 from tqdm import tqdm
@@ -35,8 +35,6 @@ def model_selection(module_path):
 
 
 def print_table(metrics):
-    recon_table = PrettyTable()
-    recon_table.field_names = ["Task", "W1_vel", "W1_acc", "L2", "PCK"]
     feature_mask = metrics['feature_mask_list']
 
     def format_metric(metric):
@@ -44,24 +42,16 @@ def print_table(metrics):
             return f"{metric['mean']:.4f} ± {metric['std']:.4f}"
         return f"{metric:.4f}"
 
-    for task_idx, task in enumerate(['gaze', 'headpose', 'pose']):
-        #fid = format_metric(metrics['fid'][task]) if feature_mask[task_idx] else '--'
-        w1_vel = format_metric(metrics['w1'][task][0]) if feature_mask[task_idx] else '--'
-        w1_acc = format_metric(metrics['w1'][task][1]) if feature_mask[task_idx] else '--'
-        l2 = format_metric(metrics['l2'][task]) if feature_mask[task_idx] else '--'
-        pck = format_metric(metrics['pck']) if feature_mask[task_idx] and task == 'pose' else '--'
-
-        recon_table.add_row([task, w1_vel, w1_acc, l2, pck])
-
-    print(recon_table)
-
     class_table = PrettyTable()
-    class_table.field_names = ["Task", "Accuracy", "F1 Score"]
+    class_table.field_names = ["Task", "Accuracy", "F1 Score", "Precision", "Recall", "nMCC"]
 
     for task_idx, task in enumerate(['speaker', 'bite']):
-        accuracy = format_metric(metrics['accuracy'][task]) if feature_mask[task_idx-2] else '--'
-        f1 = format_metric(metrics['f1'][task]) if feature_mask[task_idx-2] else '--'
-        class_table.add_row([task, accuracy, f1])
+        accuracy = format_metric(metrics[task]['accuracy']) if feature_mask[task_idx-2] else '--'
+        f1 = format_metric(metrics[task]['f1']) if feature_mask[task_idx-2] else '--'
+        precision = format_metric(metrics[task]['precision']) if feature_mask[task_idx-2] else '--'
+        recall = format_metric(metrics[task]['recall']) if feature_mask[task_idx-2] else '--'
+        nmcc = format_metric(metrics[task]['nmcc']) if feature_mask[task_idx-2] else '--'
+        class_table.add_row([task, accuracy, f1, precision, recall, nmcc])
 
     print(class_table)
 
@@ -69,13 +59,12 @@ def print_table(metrics):
 
 def compute_metrics(metrics):
     result = dict()
-    result['pck'] = metrics['pck'].compute()
-    #result['fid'] = {task:metrics['fids'][task].get_averages()['FID'] for task in metrics['fids']}
-    result['w1'] = {task: metrics['w1s'][task].compute() for task in metrics['w1s']}
-    result['l2'] = {task: metrics['l2'][task].compute() for task in metrics['l2']}
-
-    result['accuracy'] = {task:metrics['classification'][task]['accuracy'].compute().item() for task in metrics['classification']}
-    result['f1'] = {task:metrics['classification'][task]['f1'].compute().item() for task in metrics['classification']}
+    for task in metrics:
+        result[task] = dict()
+        for metric in metrics[task]:
+            result[task][metric] = metrics[task][metric].compute().item()
+            if metric == 'mcc':
+                result[task]['nmcc'] = (result[task][metric] + 1) / 2
 
     return result
  
@@ -86,46 +75,38 @@ def evaluate(module_path, dataloader):
     tasks = module.model.task_list
     feature_mask = REVERSE_FEATURE_MASK[tuple(map(int, module.feature_mask.tolist()))]
 
-    # reconstruction metric
-    pck = PCK()
-    w1s = {task:W1() for task in ['gaze', 'headpose', 'pose']}
-    l2 = {task:L2() for task in ['gaze', 'headpose', 'pose']}
-
     # classification metric
     classification_metrics = {'speaker': 
                             {'accuracy': Accuracy(task="binary").to(device), 
-                            'f1': F1Score(task="binary", average='weighted').to(device)},
+                            'f1': F1Score(task="binary", average='weighted').to(device),
+                            'precision': Precision(task="binary").to(device),
+                            'recall': Recall(task="binary").to(device),
+                            'mcc': MatthewsCorrCoef(task='binary').to(device)},
                             'bite': 
                             {'accuracy': Accuracy(task="binary").to(device), 
-                            'f1': F1Score(task="binary", average='weighted').to(device)}}
+                            'f1': F1Score(task="binary", average='weighted').to(device),
+                            'precision': Precision(task="binary").to(device),
+                            'recall': Recall(task="binary").to(device),
+                            'mcc': MatthewsCorrCoef(task='binary').to(device)}}
     
     module.eval()
     with torch.no_grad():
         for batch in tqdm(dataloader):
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-            ys, preds = module.forward(batch)[:2]
+            ys, preds = module.forward(batch)
 
             for task_idx, task in enumerate(tasks):
-                y = ys[task_idx]
-                pred = preds[task_idx]
-                if module.feature_mask[task_idx]:
-                    if task in ['gaze', 'headpose', 'pose']:
-                        # undo normalization
-                        y_undo = module.normalizer.minmax_denormalize(y, task)
-                        pred_undo = module.normalizer.minmax_denormalize(pred, task)
+                if task in ['speaker', 'bite']:
+                    if module.feature_mask[task_idx]:
+                        y = ys[task_idx-4]
+                        pred = preds[task_idx-4]
+                        classification_metrics[task]['accuracy'].update(pred, y)
+                        classification_metrics[task]['f1'].update(pred, y)
+                        classification_metrics[task]['precision'].update(pred, y)
+                        classification_metrics[task]['recall'].update(pred, y)
+                        classification_metrics[task]['mcc'].update(pred, y)
 
-                        l2[task].update(pred, y)
-                        w1s[task].update(pred_undo, y_undo)
-                        #fids[task].update(pred_undo, y_undo)
-
-                        if task == 'pose':
-                            pck.update(pred_undo, y_undo)
-                    
-                    elif task in ['speaker', 'bite']:
-                        classification_metrics[task]['accuracy'](pred, y)
-                        classification_metrics[task]['f1'](pred, y)
-
-    metrics = compute_metrics({'pck':pck, 'w1s':w1s, 'l2':l2, 'classification':classification_metrics})
+    metrics = compute_metrics(classification_metrics)
     metrics['feature_mask'] = feature_mask
     metrics['feature_mask_list'] = module.feature_mask.tolist()
     print_table(metrics)

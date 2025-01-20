@@ -275,8 +275,11 @@ class MaskTransformer(nn.Module):
 
             encode_padded = self.padding(encode, task)
             
-            ys.append(y)
+            
             encode_list.append(encode_padded)
+
+            if task in ['speaker', 'bite']:
+                ys.append(y)
 
         # it will make the input as (gaze_p1_t1, headpose_p1_t1, pose_p1_t1, word_p1_t1, gaze_p2_t1, headpose_p2_t1, pose_p2_t1, wordp2_t1, ...)
         stacked_inputs = torch.stack(encode_list, dim=3).permute(0, 2, 1, 3, 4) # (bz, 12, 3, 6, 1024)
@@ -301,10 +304,11 @@ class MaskTransformer(nn.Module):
 
         y_hats = []
 
-        # decode all the tasks
+        # decode speaker and bite tasks
         for task in self.task_list:
-            y_hat = self.decode(output, task)
-            y_hats.append(y_hat)
+            if task in ['speaker', 'bite']:
+                y_hat = self.decode(output, task)
+                y_hats.append(y_hat)
         
         return ys, y_hats
 

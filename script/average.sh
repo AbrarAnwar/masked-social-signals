@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Base directory where your metrics are stored
-ROOT_DIR="./metrics/main2"  # Takes the root directory as a command-line argument
+ROOT_DIR="./metrics2/ablation_small/6_90"  # Takes the root directory as a command-line argument
 
 # Iterate over all subdirectories in the root directory
 for SUB_DIR in "$ROOT_DIR"/*; do

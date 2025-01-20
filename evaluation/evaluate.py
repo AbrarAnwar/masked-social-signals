@@ -28,7 +28,6 @@ def save_metrics(metrics, args):
     metric_dir = f"{args.metric_dir}/{metrics['feature_mask']}"
     os.makedirs(metric_dir, exist_ok=True)
     metric_path = f'{metric_dir}/{args.test_idx}.json'
-
     with open(metric_path, 'w') as f:
         json.dump(metrics, f)
 
